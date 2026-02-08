@@ -25,6 +25,11 @@ uninstall:
 	@rm -f $(PREFIX)/bin/$(BINARY) $(HOME)/.local/bin/$(BINARY)
 	@echo "✅ Uninstalled $(BINARY)"
 
+update:
+	@echo "Updating izerop-cli..."
+	@git pull
+	@$(MAKE) install
+
 clean:
 	rm -rf bin/
 
