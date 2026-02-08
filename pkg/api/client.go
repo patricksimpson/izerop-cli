@@ -148,6 +148,52 @@ func (c *Client) ListDirectories() ([]Directory, error) {
 	return wrapper.Directories, nil
 }
 
+// Change represents a single change from the sync/changes API.
+type Change struct {
+	Type        string `json:"type"`
+	Action      string `json:"action"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	DirectoryID string `json:"directory_id"`
+	ParentID    string `json:"parent_id"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// ChangesResponse is the response from /api/v1/sync/changes.
+type ChangesResponse struct {
+	Changes []Change `json:"changes"`
+	Cursor  string   `json:"cursor"`
+	HasMore bool     `json:"has_more"`
+}
+
+// GetChanges fetches changes since the given cursor.
+func (c *Client) GetChanges(cursor string) (*ChangesResponse, error) {
+	path := "/api/v1/sync/changes"
+	if cursor != "" {
+		path = fmt.Sprintf("%s?since=%s", path, cursor)
+	}
+
+	resp, err := c.do("GET", path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var result ChangesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("could not decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // UploadFile uploads a local file to the server.
 func (c *Client) UploadFile(localPath, directoryID, name string) (*FileEntry, error) {
 	f, err := os.Open(localPath)

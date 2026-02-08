@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/patricksimpson/izerop-cli/internal/auth"
 	"github.com/patricksimpson/izerop-cli/pkg/api"
 	"github.com/patricksimpson/izerop-cli/pkg/config"
+	"github.com/patricksimpson/izerop-cli/pkg/sync"
 )
 
 const version = "0.1.0"
@@ -97,8 +100,93 @@ func cmdStatus(cfg *config.Config) {
 	}
 }
 
-func cmdSync(_ *config.Config) {
-	fmt.Println("Sync not yet implemented")
+func cmdSync(cfg *config.Config) {
+	// Usage: izerop sync [<directory>] [--push-only] [--pull-only] [--verbose]
+	syncDir := cfg.SyncDir
+	pushOnly := false
+	pullOnly := false
+	verbose := false
+
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--push-only":
+			pushOnly = true
+		case "--pull-only":
+			pullOnly = true
+		case "--verbose", "-v":
+			verbose = true
+		default:
+			if !strings.HasPrefix(os.Args[i], "--") {
+				syncDir = os.Args[i]
+			}
+		}
+	}
+
+	if syncDir == "" {
+		syncDir = "."
+	}
+
+	// Resolve to absolute path
+	absDir, err := filepath.Abs(syncDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid directory: %v\n", err)
+		os.Exit(1)
+	}
+	syncDir = absDir
+
+	// Verify directory exists
+	info, err := os.Stat(syncDir)
+	if err != nil || !info.IsDir() {
+		fmt.Fprintf(os.Stderr, "Not a directory: %s\n", syncDir)
+		os.Exit(1)
+	}
+
+	client := newClient(cfg)
+	engine := sync.NewEngine(client, syncDir)
+	engine.Verbose = verbose
+
+	fmt.Printf("Syncing: %s ↔ %s\n", syncDir, cfg.ServerURL)
+
+	// Load sync state
+	state, _ := sync.LoadState(syncDir)
+
+	// Pull remote changes
+	if !pushOnly {
+		fmt.Println("⬇ Pulling remote changes...")
+		pullResult, newCursor, err := engine.PullSync(state.Cursor)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Pull error: %v\n", err)
+		} else {
+			state.Cursor = newCursor
+			fmt.Printf("  Downloaded: %d, Deleted: %d, Skipped: %d\n",
+				pullResult.Downloaded, pullResult.Deleted, pullResult.Skipped)
+			for _, e := range pullResult.Errors {
+				fmt.Fprintf(os.Stderr, "  ⚠ %s\n", e)
+			}
+		}
+	}
+
+	// Push local changes
+	if !pullOnly {
+		fmt.Println("⬆ Pushing local changes...")
+		pushResult, err := engine.PushSync()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Push error: %v\n", err)
+		} else {
+			fmt.Printf("  Uploaded: %d, Skipped: %d\n",
+				pushResult.Uploaded, pushResult.Skipped)
+			for _, e := range pushResult.Errors {
+				fmt.Fprintf(os.Stderr, "  ⚠ %s\n", e)
+			}
+		}
+	}
+
+	// Save state
+	if err := sync.SaveState(syncDir, state); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not save sync state: %v\n", err)
+	}
+
+	fmt.Println("✅ Sync complete")
 }
 
 func cmdPush(cfg *config.Config) {
