@@ -258,11 +258,18 @@ func (c *Client) UploadFile(localPath, directoryID, name string) (*FileEntry, er
 // DownloadFile downloads a file by ID and writes it to the given writer.
 // Returns the suggested filename from Content-Disposition if available.
 func (c *Client) DownloadFile(fileID string, dest io.Writer) (string, error) {
-	// Don't follow redirects automatically — we need to handle S3 redirects with auth
+	// Strip auth headers when redirected to S3/external hosts
 	client := &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout: 120 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return nil // follow redirects normally
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			// Strip Authorization header when redirecting to a different host (e.g., S3)
+			if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+				req.Header.Del("Authorization")
+			}
+			return nil
 		},
 	}
 
