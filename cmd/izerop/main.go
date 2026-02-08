@@ -123,7 +123,7 @@ func cmdList(cfg *config.Config) {
 			os.Exit(1)
 		}
 		for _, d := range dirs {
-			fmt.Printf("  📁 %-30s  (id: %d)\n", d.Name+"/", d.ID)
+			fmt.Printf("  📁 %-30s  %s\n", d.Name+"/", d.ID[:8])
 		}
 	}
 

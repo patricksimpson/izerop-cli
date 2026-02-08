@@ -72,12 +72,13 @@ func (c *Client) GetSyncStatus() (*SyncStatus, error) {
 
 // FileEntry represents a file from /api/v1/files.
 type FileEntry struct {
-	ID          int    `json:"id"`
+	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Path        string `json:"path"`
 	Size        int64  `json:"size"`
 	ContentType string `json:"content_type"`
-	Checksum    string `json:"checksum"`
+	Public      bool   `json:"public"`
+	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
 
@@ -110,11 +111,14 @@ func (c *Client) ListFiles(directoryID string) ([]FileEntry, error) {
 
 // Directory represents a directory from /api/v1/directories.
 type Directory struct {
-	ID        int    `json:"id"`
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	ParentID  *int   `json:"parent_id"`
-	UpdatedAt string `json:"updated_at"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Path      string  `json:"path"`
+	ParentID  *string `json:"parent_id"`
+	Public    bool    `json:"public"`
+	FileCount int     `json:"file_count"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
 }
 
 // ListDirectories fetches the directory listing.
