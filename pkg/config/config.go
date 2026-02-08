@@ -32,21 +32,37 @@ func ConfigPath() (string, error) {
 	return filepath.Join(dir, "config.json"), nil
 }
 
-// Load reads the config from disk.
+// Load reads the config from disk, then applies env var overrides.
+// Precedence: env vars > config file.
 func Load() (*Config, error) {
 	path, err := ConfigPath()
 	if err != nil {
 		return nil, err
 	}
 
+	var cfg Config
+
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("config not found at %s: %w", path, err)
+		// Config file missing is OK if env vars provide what we need
+		cfg = Config{}
+	} else if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+	// Env var overrides
+	if v := os.Getenv("IZEROP_SERVER_URL"); v != "" {
+		cfg.ServerURL = v
+	}
+	if v := os.Getenv("IZEROP_TOKEN"); v != "" {
+		cfg.Token = v
+	}
+	if v := os.Getenv("IZEROP_SYNC_DIR"); v != "" {
+		cfg.SyncDir = v
+	}
+
+	if cfg.ServerURL == "" {
+		cfg.ServerURL = "https://izerop.com"
 	}
 
 	return &cfg, nil

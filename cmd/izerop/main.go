@@ -12,6 +12,22 @@ import (
 const version = "0.1.0"
 
 func main() {
+	// Extract --server flag before command parsing
+	args := os.Args[1:]
+	var serverOverride string
+	var filtered []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--server" && i+1 < len(args) {
+			serverOverride = args[i+1]
+			i++ // skip value
+		} else if len(args[i]) > 9 && args[i][:9] == "--server=" {
+			serverOverride = args[i][9:]
+		} else {
+			filtered = append(filtered, args[i])
+		}
+	}
+	os.Args = append([]string{os.Args[0]}, filtered...)
+
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -22,6 +38,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Run 'izerop login' to configure.\n")
 		os.Exit(1)
+	}
+
+	// --server flag takes highest priority
+	if serverOverride != "" && cfg != nil {
+		cfg.ServerURL = serverOverride
 	}
 
 	switch os.Args[1] {
@@ -156,6 +177,16 @@ Commands:
   ls        List remote files and directories
   version   Print version
   help      Show this help
+
+Options:
+  --server URL    Override server URL (default: config or https://izerop.com)
+
+Environment:
+  IZEROP_SERVER_URL   Override server URL
+  IZEROP_TOKEN        Override API token
+  IZEROP_SYNC_DIR     Override sync directory
+
+Precedence: --server flag > env vars > config file
 
 `, version)
 }
