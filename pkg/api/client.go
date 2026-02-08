@@ -43,9 +43,11 @@ func (c *Client) do(method, path string, body io.Reader) (*http.Response, error)
 
 // SyncStatus represents the response from /api/v1/sync/status.
 type SyncStatus struct {
-	Status    string `json:"status"`
-	FileCount int    `json:"file_count"`
-	LastSync  string `json:"last_sync"`
+	FileCount      int    `json:"file_count"`
+	DirectoryCount int    `json:"directory_count"`
+	TotalSize      int64  `json:"total_size"`
+	Cursor         string `json:"cursor"`
+	LastSync       string `json:"last_sync"`
 }
 
 // GetSyncStatus fetches the current sync status.
@@ -83,7 +85,7 @@ type FileEntry struct {
 func (c *Client) ListFiles(directoryID string) ([]FileEntry, error) {
 	path := "/api/v1/files"
 	if directoryID != "" {
-		path = fmt.Sprintf("/api/v1/directories/%s/files", directoryID)
+		path = fmt.Sprintf("/api/v1/files?directory_id=%s", directoryID)
 	}
 
 	resp, err := c.do("GET", path, nil)
@@ -96,12 +98,14 @@ func (c *Client) ListFiles(directoryID string) ([]FileEntry, error) {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
-	var files []FileEntry
-	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+	var wrapper struct {
+		Files []FileEntry `json:"files"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
 		return nil, fmt.Errorf("could not decode response: %w", err)
 	}
 
-	return files, nil
+	return wrapper.Files, nil
 }
 
 // Directory represents a directory from /api/v1/directories.
@@ -125,10 +129,12 @@ func (c *Client) ListDirectories() ([]Directory, error) {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
-	var dirs []Directory
-	if err := json.NewDecoder(resp.Body).Decode(&dirs); err != nil {
+	var wrapper struct {
+		Directories []Directory `json:"directories"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
 		return nil, fmt.Errorf("could not decode response: %w", err)
 	}
 
-	return dirs, nil
+	return wrapper.Directories, nil
 }

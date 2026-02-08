@@ -86,10 +86,11 @@ func cmdStatus(cfg *config.Config) {
 		fmt.Printf("Status:  error (%v)\n", err)
 		return
 	}
-	fmt.Printf("Status:  %s\n", status.Status)
 	fmt.Printf("Files:   %d\n", status.FileCount)
+	fmt.Printf("Dirs:    %d\n", status.DirectoryCount)
+	fmt.Printf("Size:    %s\n", formatSize(status.TotalSize))
 	if status.LastSync != "" {
-		fmt.Printf("Last sync: %s\n", status.LastSync)
+		fmt.Printf("Cursor:  %s\n", status.Cursor)
 	}
 }
 
