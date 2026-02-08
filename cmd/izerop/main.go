@@ -64,6 +64,8 @@ func main() {
 		cmdPull(cfg)
 	case "ls":
 		cmdList(cfg)
+	case "mkdir":
+		cmdMkdir(cfg)
 	case "help":
 		printUsage()
 	default:
@@ -256,6 +258,34 @@ func cmdList(cfg *config.Config) {
 		size := formatSize(f.Size)
 		fmt.Printf("  📄 %-30s  %8s  %s  %s\n", f.Name, size, f.UpdatedAt, f.ID)
 	}
+}
+
+func cmdMkdir(cfg *config.Config) {
+	// Usage: izerop mkdir <name> [--parent <directory_id>]
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: izerop mkdir <name> [--parent <directory_id>]\n")
+		os.Exit(1)
+	}
+
+	name := os.Args[2]
+	var parentID string
+
+	for i := 3; i < len(os.Args); i++ {
+		if os.Args[i] == "--parent" && i+1 < len(os.Args) {
+			parentID = os.Args[i+1]
+			i++
+		}
+	}
+
+	client := newClient(cfg)
+
+	dir, err := client.CreateDirectory(name, parentID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Created: %s/ (%s)\n", dir.Name, dir.ID)
 }
 
 func formatSize(bytes int64) string {
