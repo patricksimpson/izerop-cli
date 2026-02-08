@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/patricksimpson/izerop-cli/internal/auth"
@@ -146,8 +147,76 @@ func cmdPush(cfg *config.Config) {
 	fmt.Printf("✅ Uploaded: %s (%s)\n", file.Name, file.ID[:8])
 }
 
-func cmdPull(_ *config.Config) {
-	fmt.Println("Pull not yet implemented")
+func cmdPull(cfg *config.Config) {
+	// Usage: izerop pull <file_id> [--out <path>]
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: izerop pull <file_id> [--out <path>]\n")
+		os.Exit(1)
+	}
+
+	fileID := os.Args[2]
+	var outPath string
+
+	for i := 3; i < len(os.Args); i++ {
+		if os.Args[i] == "--out" && i+1 < len(os.Args) {
+			outPath = os.Args[i+1]
+			i++
+		}
+	}
+
+	client := newClient(cfg)
+
+	// If no output path, we need to figure out the filename
+	// First download to a buffer to get the filename from headers
+	if outPath == "" {
+		// Download to temp, then rename
+		tmpFile, err := os.CreateTemp("", "izerop-dl-*")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not create temp file: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Downloading %s...\n", fileID)
+		filename, err := client.DownloadFile(fileID, tmpFile)
+		tmpFile.Close()
+		if err != nil {
+			os.Remove(tmpFile.Name())
+			fmt.Fprintf(os.Stderr, "Download failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		if filename == "" {
+			filename = fileID
+		}
+		outPath = filename
+
+		if err := os.Rename(tmpFile.Name(), outPath); err != nil {
+			// Cross-device rename, copy instead
+			src, _ := os.Open(tmpFile.Name())
+			dst, _ := os.Create(outPath)
+			io.Copy(dst, src)
+			src.Close()
+			dst.Close()
+			os.Remove(tmpFile.Name())
+		}
+	} else {
+		f, err := os.Create(outPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not create file: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+
+		fmt.Printf("Downloading %s...\n", fileID)
+		_, err = client.DownloadFile(fileID, f)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Download failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	info, _ := os.Stat(outPath)
+	fmt.Printf("✅ Downloaded: %s (%s)\n", outPath, formatSize(info.Size()))
 }
 
 func cmdList(cfg *config.Config) {
@@ -185,7 +254,7 @@ func cmdList(cfg *config.Config) {
 
 	for _, f := range files {
 		size := formatSize(f.Size)
-		fmt.Printf("  📄 %-30s  %8s  %s\n", f.Name, size, f.UpdatedAt)
+		fmt.Printf("  📄 %-30s  %8s  %s  %s\n", f.Name, size, f.UpdatedAt, f.ID)
 	}
 }
 

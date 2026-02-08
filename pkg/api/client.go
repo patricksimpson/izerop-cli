@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -206,6 +207,51 @@ func (c *Client) UploadFile(localPath, directoryID, name string) (*FileEntry, er
 	}
 
 	return &wrapper.File, nil
+}
+
+// DownloadFile downloads a file by ID and writes it to the given writer.
+// Returns the suggested filename from Content-Disposition if available.
+func (c *Client) DownloadFile(fileID string, dest io.Writer) (string, error) {
+	// Don't follow redirects automatically — we need to handle S3 redirects with auth
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return nil // follow redirects normally
+		},
+	}
+
+	url := fmt.Sprintf("%s/api/v1/files/%s/download", c.BaseURL, fileID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("download request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("download failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	// Try to get filename from Content-Disposition header
+	filename := ""
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if i := bytes.Index([]byte(cd), []byte("filename=")); i >= 0 {
+			filename = string([]byte(cd)[i+9:])
+			filename = strings.Trim(filename, `"' `)
+		}
+	}
+
+	if _, err := io.Copy(dest, resp.Body); err != nil {
+		return filename, fmt.Errorf("error writing file: %w", err)
+	}
+
+	return filename, nil
 }
 
 // CreateDirectory creates a new directory on the server.
