@@ -314,37 +314,50 @@ func cmdList(cfg *config.Config) {
 
 	// Optional directory ID as second arg
 	dirID := ""
-	if len(os.Args) > 2 {
+	if len(os.Args) > 2 && !strings.HasPrefix(os.Args[2], "--") {
 		dirID = os.Args[2]
 	}
 
-	// List directories first
-	if dirID == "" {
-		dirs, err := client.ListDirectories()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing directories: %v\n", err)
-			os.Exit(1)
-		}
-		for _, d := range dirs {
-			fmt.Printf("  📁 %-30s  %s\n", d.Name+"/", d.ID)
-		}
-	}
-
-	// List files
-	files, err := client.ListFiles(dirID)
+	// List directories
+	dirs, err := client.ListDirectories()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing files: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error listing directories: %v\n", err)
 		os.Exit(1)
 	}
 
-	if len(files) == 0 && dirID != "" {
-		fmt.Println("No files found.")
-		return
-	}
+	if dirID == "" {
+		// Show all directories and all files
+		for _, d := range dirs {
+			fmt.Printf("📁 %-30s  %d files  %s\n", d.Path+"/", d.FileCount, d.ID)
 
-	for _, f := range files {
-		size := formatSize(f.Size)
-		fmt.Printf("  📄 %-30s  %8s  %s  %s\n", f.Name, size, f.UpdatedAt, f.ID)
+			// List files in this directory
+			files, err := client.ListFiles(d.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ Error listing files: %v\n", err)
+				continue
+			}
+			for _, f := range files {
+				size := formatSize(f.Size)
+				fmt.Printf("  📄 %-28s  %8s  %s  %s\n", f.Name, size, f.UpdatedAt, f.ID)
+			}
+		}
+
+		// Also show files without a directory filter (root-level)
+	} else {
+		// List files in specific directory
+		files, err := client.ListFiles(dirID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing files: %v\n", err)
+			os.Exit(1)
+		}
+		if len(files) == 0 {
+			fmt.Println("No files found.")
+			return
+		}
+		for _, f := range files {
+			size := formatSize(f.Size)
+			fmt.Printf("  📄 %-28s  %8s  %s  %s\n", f.Name, size, f.UpdatedAt, f.ID)
+		}
 	}
 }
 

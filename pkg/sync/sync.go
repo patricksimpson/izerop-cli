@@ -75,23 +75,24 @@ func (e *Engine) PullSync(cursor string) (*SyncResult, string, error) {
 func (e *Engine) PushSync() (*SyncResult, error) {
 	result := &SyncResult{}
 
-	// Get remote state
+	// Get remote state — directories
 	dirs, err := e.Client.ListDirectories()
 	if err != nil {
 		return nil, fmt.Errorf("could not list remote directories: %w", err)
 	}
-	files, err := e.Client.ListFiles("")
-	if err != nil {
-		return nil, fmt.Errorf("could not list remote files: %w", err)
-	}
 
-	// Build remote file index by path
+	// Build remote dir index by path
 	remoteDirsByPath := make(map[string]api.Directory)
 	for _, d := range dirs {
 		remoteDirsByPath[d.Path] = d
 	}
 
+	// Get ALL remote files (across all directories) indexed by path
 	remoteFilesByPath := make(map[string]api.FileEntry)
+	files, err := e.Client.ListFiles("")
+	if err != nil {
+		return nil, fmt.Errorf("could not list remote files: %w", err)
+	}
 	for _, f := range files {
 		remoteFilesByPath[f.Path] = f
 	}
@@ -122,15 +123,17 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 		if info.IsDir() {
 			// Check if directory exists remotely
 			if _, exists := remoteDirsByPath[remotePath]; !exists {
-				// Find or create parent
+				// Find or create parent directory
 				parentPath := filepath.Dir(remotePath)
 				parentID := ""
-				if parent, ok := remoteDirsByPath[parentPath]; ok {
-					parentID = parent.ID
+				if parentPath != "/" {
+					if parent, ok := remoteDirsByPath[parentPath]; ok {
+						parentID = parent.ID
+					}
 				}
 
 				if e.Verbose {
-					fmt.Printf("  Creating directory: %s\n", remotePath)
+					fmt.Printf("  📁 Creating: %s\n", remotePath)
 				}
 				dir, err := e.Client.CreateDirectory(info.Name(), parentID)
 				if err != nil {
@@ -159,12 +162,17 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 			dirID = dir.ID
 		}
 
-		if e.Verbose {
-			fmt.Printf("  Uploading: %s\n", remotePath)
+		if dirID == "" {
+			result.Errors = append(result.Errors, fmt.Sprintf("no remote directory for %s (dir: %s)", remotePath, dirPath))
+			return nil
 		}
-		_, err = e.Client.UploadFile(path, dirID, info.Name())
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("upload %s: %v", remotePath, err))
+
+		if e.Verbose {
+			fmt.Printf("  ⬆ Uploading: %s\n", remotePath)
+		}
+		_, uploadErr := e.Client.UploadFile(path, dirID, info.Name())
+		if uploadErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("upload %s: %v", remotePath, uploadErr))
 		} else {
 			result.Uploaded++
 		}
