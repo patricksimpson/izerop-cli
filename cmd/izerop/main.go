@@ -98,8 +98,52 @@ func cmdSync(_ *config.Config) {
 	fmt.Println("Sync not yet implemented")
 }
 
-func cmdPush(_ *config.Config) {
-	fmt.Println("Push not yet implemented")
+func cmdPush(cfg *config.Config) {
+	// Usage: izerop push <file> [--dir <directory_id>] [--name <name>]
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: izerop push <file> [--dir <directory_id>] [--name <name>]\n")
+		os.Exit(1)
+	}
+
+	filePath := os.Args[2]
+	var dirID, name string
+
+	for i := 3; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--dir":
+			if i+1 < len(os.Args) {
+				dirID = os.Args[i+1]
+				i++
+			}
+		case "--name":
+			if i+1 < len(os.Args) {
+				name = os.Args[i+1]
+				i++
+			}
+		}
+	}
+
+	// Verify file exists
+	info, err := os.Stat(filePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "File not found: %s\n", filePath)
+		os.Exit(1)
+	}
+	if info.IsDir() {
+		fmt.Fprintf(os.Stderr, "Cannot push a directory (yet). Use a file path.\n")
+		os.Exit(1)
+	}
+
+	client := newClient(cfg)
+
+	fmt.Printf("Uploading %s (%s)...\n", filePath, formatSize(info.Size()))
+	file, err := client.UploadFile(filePath, dirID, name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Upload failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Uploaded: %s (%s)\n", file.Name, file.ID[:8])
 }
 
 func cmdPull(_ *config.Config) {
@@ -123,7 +167,7 @@ func cmdList(cfg *config.Config) {
 			os.Exit(1)
 		}
 		for _, d := range dirs {
-			fmt.Printf("  📁 %-30s  %s\n", d.Name+"/", d.ID[:8])
+			fmt.Printf("  📁 %-30s  %s\n", d.Name+"/", d.ID)
 		}
 	}
 
