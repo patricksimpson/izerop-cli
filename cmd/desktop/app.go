@@ -25,10 +25,9 @@ type App struct {
 	watcher *watcher.Watcher
 	watchMu gosync.Mutex
 
-	logMu      gosync.Mutex
-	logs       []LogEntry
-	maxLogs    int
-	traySyncCh chan struct{}
+	logMu   gosync.Mutex
+	logs    []LogEntry
+	maxLogs int
 }
 
 // LogEntry represents a single log line
@@ -41,8 +40,7 @@ type LogEntry struct {
 // NewApp creates a new App instance
 func NewApp() *App {
 	return &App{
-		maxLogs:    500,
-		traySyncCh: make(chan struct{}, 1),
+		maxLogs: 500,
 	}
 }
 
@@ -55,14 +53,6 @@ func (a *App) startup(ctx context.Context) {
 		a.client = api.NewClient(cfg.ServerURL, cfg.Token)
 	}
 
-	// Start system tray
-	go a.startTray()
-}
-
-// beforeClose hides to tray instead of quitting (only if tray is active)
-func (a *App) beforeClose(ctx context.Context) bool {
-	// For now, allow normal close — tray minimize can be opt-in later
-	return false
 }
 
 // ---- Log capture ----
@@ -378,7 +368,6 @@ func (a *App) StartWatch() ActionResult {
 	a.watchMu.Unlock()
 
 	a.addLog("success", "Started watching: "+a.cfg.SyncDir)
-	a.notifyTray()
 
 	// Run watcher in background
 	go func() {
@@ -395,17 +384,9 @@ func (a *App) StartWatch() ActionResult {
 		if a.ctx != nil {
 			runtime.EventsEmit(a.ctx, "watch-stopped", nil)
 		}
-		a.notifyTray()
 	}()
 
 	return ActionResult{Success: true}
-}
-
-func (a *App) notifyTray() {
-	select {
-	case a.traySyncCh <- struct{}{}:
-	default:
-	}
 }
 
 func (a *App) StopWatch() ActionResult {

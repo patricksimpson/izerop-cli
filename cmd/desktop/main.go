@@ -35,8 +35,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: distFS,
 		},
-		OnStartup:     app.startup,
-		OnBeforeClose: app.beforeClose,
+		OnStartup: app.startup,
 		Linux: &linux.Options{
 			Icon: appIcon,
 		},
