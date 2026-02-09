@@ -4,8 +4,9 @@ LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 PREFIX := /usr/local
 
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+WAILS := $(shell command -v wails 2>/dev/null || echo "$(HOME)/.local/share/mise/installs/go/$(shell go env GOVERSION | sed 's/go//')/bin/wails")
 
-.PHONY: build install uninstall clean test release
+.PHONY: build install uninstall clean test release desktop
 
 build:
 	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/izerop
@@ -44,8 +45,15 @@ release: clean
 	done
 	@echo "✅ Release binaries in dist/"
 
+desktop:
+	cd cmd/desktop && $(WAILS) build
+	@echo "✅ Desktop app built: cmd/desktop/build/bin/"
+
+desktop-dev:
+	cd cmd/desktop && $(WAILS) dev
+
 clean:
-	rm -rf bin/ dist/
+	rm -rf bin/ dist/ cmd/desktop/build/
 
 test:
 	go test ./...
