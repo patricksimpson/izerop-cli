@@ -51,6 +51,7 @@ type SyncStatus struct {
 	FileCount      int    `json:"file_count"`
 	DirectoryCount int    `json:"directory_count"`
 	TotalSize      int64  `json:"total_size"`
+	StorageLimit   int64  `json:"storage_limit"`
 	Cursor         string `json:"cursor"`
 	LastSync       string `json:"last_sync"`
 }

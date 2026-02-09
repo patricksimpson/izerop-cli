@@ -43,6 +43,7 @@ type StatusInfo struct {
 	FileCount      int    `json:"fileCount"`
 	DirectoryCount int    `json:"directoryCount"`
 	TotalSize      int64  `json:"totalSize"`
+	StorageLimit   int64  `json:"storageLimit"`
 	Cursor         string `json:"cursor"`
 	Connected      bool   `json:"connected"`
 	Server         string `json:"server"`
@@ -115,6 +116,7 @@ func (a *App) GetStatus() StatusInfo {
 		FileCount:      status.FileCount,
 		DirectoryCount: status.DirectoryCount,
 		TotalSize:      status.TotalSize,
+		StorageLimit:   status.StorageLimit,
 		Cursor:         status.Cursor,
 		Connected:      true,
 		Server:         a.cfg.ServerURL,

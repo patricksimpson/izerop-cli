@@ -167,6 +167,35 @@
         .stat-value { font-size: 28px; font-weight: 700; color: var(--accent); }
         .stat-label { font-size: 12px; color: var(--text-dim); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
 
+        /* Storage bar */
+        .storage-bar-container { margin-bottom: 24px; }
+
+        .storage-bar-track {
+            height: 8px;
+            background: var(--surface);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .storage-bar-fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            min-width: 0;
+        }
+
+        .storage-bar-fill.warn { background: var(--warn); }
+        .storage-bar-fill.danger { background: var(--error); }
+
+        .storage-bar-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 4px;
+        }
+
         /* Section headers */
         .section-header {
             display: flex;
@@ -416,7 +445,17 @@
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="storage-size">-</div>
-                        <div class="stat-label">Storage</div>
+                        <div class="stat-label">Used</div>
+                    </div>
+                </div>
+
+                <div class="storage-bar-container">
+                    <div class="storage-bar-track">
+                        <div class="storage-bar-fill" id="storage-bar-fill"></div>
+                    </div>
+                    <div class="storage-bar-labels">
+                        <span id="storage-used-label">-</span>
+                        <span id="storage-limit-label">-</span>
                     </div>
                 </div>
 
@@ -598,6 +637,14 @@
                     document.getElementById('dir-count').textContent = s.directoryCount;
                     document.getElementById('storage-size').textContent = formatSize(s.totalSize);
                     document.getElementById('server-display').textContent = s.server;
+
+                    // Storage bar
+                    const pct = s.storageLimit > 0 ? Math.min((s.totalSize / s.storageLimit) * 100, 100) : 0;
+                    const fill = document.getElementById('storage-bar-fill');
+                    fill.style.width = pct.toFixed(1) + '%';
+                    fill.className = 'storage-bar-fill' + (pct > 90 ? ' danger' : pct > 75 ? ' warn' : '');
+                    document.getElementById('storage-used-label').textContent = formatSize(s.totalSize) + ' used';
+                    document.getElementById('storage-limit-label').textContent = formatSize(s.storageLimit) + ' total';
                 } else {
                     badge.className = 'status-badge disconnected';
                     text.textContent = 'Disconnected';
