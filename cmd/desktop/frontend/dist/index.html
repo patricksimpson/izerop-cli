@@ -29,6 +29,7 @@
             flex-direction: column;
             user-select: none;
             -webkit-user-select: none;
+            overflow: hidden;
         }
 
         .titlebar {
@@ -49,6 +50,7 @@
         .app-layout {
             display: flex;
             flex: 1;
+            min-height: 0;
             overflow: hidden;
         }
 
@@ -58,6 +60,8 @@
             border-right: 1px solid rgba(255,255,255,0.05);
             padding: 12px 8px;
             flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
         }
 
         .nav-item {
@@ -79,11 +83,12 @@
 
         .main-content {
             flex: 1;
+            min-height: 0;
             overflow-y: auto;
             padding: 24px;
         }
 
-        .content { display: flex; align-items: center; justify-content: center; flex: 1; padding: 24px; }
+        .content { display: flex; align-items: center; justify-content: center; flex: 1; padding: 24px; overflow-y: auto; min-height: 0; }
 
         /* Login */
         .login-card {
@@ -334,6 +339,10 @@
             </div>
             <div class="nav-item" data-screen="settings" onclick="navigate('settings')">
                 <span class="icon">⚙️</span> Settings
+            </div>
+            <div style="flex:1"></div>
+            <div class="nav-item" onclick="logout()" style="color: var(--error);">
+                <span class="icon">🚪</span> Logout
             </div>
         </div>
 
@@ -653,14 +662,14 @@
                 return;
             }
 
-            el.innerHTML = logs.map(l =>
+            el.innerHTML = logs.slice().reverse().map(l =>
                 `<div class="log-entry ${l.level}">
                     <span class="log-time">${l.time}</span>
                     <span class="log-msg">${escapeHtml(l.message)}</span>
                 </div>`
             ).join('');
 
-            el.scrollTop = el.scrollHeight;
+            el.scrollTop = 0;
         }
 
         function escapeHtml(s) {
