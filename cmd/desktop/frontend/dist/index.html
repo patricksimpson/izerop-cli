@@ -13,6 +13,7 @@
             --text: #eee;
             --text-dim: #999;
             --success: #4ade80;
+            --warn: #fbbf24;
             --error: #f87171;
             --radius: 8px;
         }
@@ -30,7 +31,6 @@
             -webkit-user-select: none;
         }
 
-        /* Titlebar drag region */
         .titlebar {
             --wails-draggable: drag;
             height: 32px;
@@ -45,15 +45,47 @@
             flex-shrink: 0;
         }
 
-        .content {
+        /* Navigation */
+        .app-layout {
+            display: flex;
             flex: 1;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 180px;
+            background: var(--surface);
+            border-right: 1px solid rgba(255,255,255,0.05);
+            padding: 12px 8px;
+            flex-shrink: 0;
+        }
+
+        .nav-item {
             display: flex;
             align-items: center;
-            justify-content: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: var(--radius);
+            font-size: 13px;
+            cursor: pointer;
+            color: var(--text-dim);
+            transition: all 0.15s;
+        }
+
+        .nav-item:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+        .nav-item.active { background: var(--accent); color: white; }
+
+        .nav-item .icon { font-size: 16px; }
+
+        .main-content {
+            flex: 1;
+            overflow-y: auto;
             padding: 24px;
         }
 
-        /* Login screen */
+        .content { display: flex; align-items: center; justify-content: center; flex: 1; padding: 24px; }
+
+        /* Login */
         .login-card {
             background: var(--surface);
             border-radius: var(--radius);
@@ -63,30 +95,13 @@
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
         }
 
-        .login-card h1 {
-            font-size: 24px;
-            margin-bottom: 4px;
-        }
+        .login-card h1 { font-size: 24px; margin-bottom: 4px; }
+        .login-card > p { color: var(--text-dim); font-size: 14px; margin-bottom: 24px; }
 
-        .login-card p {
-            color: var(--text-dim);
-            font-size: 14px;
-            margin-bottom: 24px;
-        }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 13px; font-weight: 500; color: var(--text-dim); margin-bottom: 6px; }
 
-        .form-group {
-            margin-bottom: 16px;
-        }
-
-        .form-group label {
-            display: block;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--text-dim);
-            margin-bottom: 6px;
-        }
-
-        .form-group input {
+        .form-group input, .form-group textarea {
             width: 100%;
             padding: 10px 12px;
             background: var(--bg);
@@ -96,15 +111,12 @@
             font-size: 14px;
             outline: none;
             transition: border-color 0.2s;
+            font-family: inherit;
         }
 
-        .form-group input:focus {
-            border-color: var(--accent);
-        }
-
-        .form-group input::placeholder {
-            color: #555;
-        }
+        .form-group input:focus, .form-group textarea:focus { border-color: var(--accent); }
+        .form-group input::placeholder, .form-group textarea::placeholder { color: #555; }
+        .form-group textarea { min-height: 120px; resize: vertical; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
 
         .btn {
             display: inline-flex;
@@ -119,45 +131,46 @@
             font-weight: 600;
             cursor: pointer;
             transition: opacity 0.2s;
-            width: 100%;
         }
 
         .btn:hover { opacity: 0.9; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-full { width: 100%; }
 
         .btn-outline {
             background: transparent;
             border: 1px solid rgba(255,255,255,0.15);
             color: var(--text-dim);
         }
+        .btn-outline:hover { border-color: rgba(255,255,255,0.3); color: var(--text); }
 
-        .btn-outline:hover {
-            border-color: rgba(255,255,255,0.3);
-            color: var(--text);
+        .btn-success { background: var(--success); color: #111; }
+        .btn-sm { padding: 6px 14px; font-size: 13px; }
+
+        .error-msg { color: var(--error); font-size: 13px; margin-top: 12px; }
+
+        /* Stats */
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
+
+        .stat-card {
+            background: var(--surface);
+            border-radius: var(--radius);
+            padding: 20px;
+            text-align: center;
         }
 
-        .error-msg {
-            color: var(--error);
-            font-size: 13px;
-            margin-top: 12px;
-        }
+        .stat-value { font-size: 28px; font-weight: 700; color: var(--accent); }
+        .stat-label { font-size: 12px; color: var(--text-dim); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
 
-        /* Dashboard */
-        .dashboard {
-            width: 100%;
-            max-width: 600px;
-        }
-
-        .dashboard-header {
+        /* Section headers */
+        .section-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 24px;
+            margin-bottom: 16px;
         }
 
-        .dashboard-header h1 {
-            font-size: 20px;
-        }
+        .section-header h2 { font-size: 18px; }
 
         .status-badge {
             display: inline-flex;
@@ -169,51 +182,88 @@
             font-weight: 600;
         }
 
-        .status-badge.connected {
-            background: rgba(74, 222, 128, 0.15);
-            color: var(--success);
-        }
+        .status-badge.connected { background: rgba(74, 222, 128, 0.15); color: var(--success); }
+        .status-badge.watching { background: rgba(233, 69, 96, 0.15); color: var(--accent); }
+        .status-badge.disconnected { background: rgba(248, 113, 113, 0.15); color: var(--error); }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 
-        .status-badge.disconnected {
-            background: rgba(248, 113, 113, 0.15);
-            color: var(--error);
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: currentColor;
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-bottom: 24px;
-        }
-
-        .stat-card {
+        /* Sync dir display */
+        .sync-dir-box {
             background: var(--surface);
             border-radius: var(--radius);
-            padding: 20px;
-            text-align: center;
+            padding: 16px;
+            margin-bottom: 16px;
         }
 
-        .stat-value {
-            font-size: 28px;
-            font-weight: 700;
-            color: var(--accent);
+        .sync-dir-box .label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+
+        .sync-dir-box .path {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 14px;
+            color: var(--text);
+            word-break: break-all;
         }
 
-        .stat-label {
+        .sync-dir-box .no-dir { color: var(--text-dim); font-style: italic; }
+
+        .btn-row { display: flex; gap: 8px; margin-top: 12px; }
+        .btn-row .btn { flex: 1; }
+
+        /* Activity log */
+        .log-container {
+            background: var(--surface);
+            border-radius: var(--radius);
+            overflow: hidden;
+            margin-top: 16px;
+        }
+
+        .log-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .log-header h3 { font-size: 14px; }
+
+        .log-entries {
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 8px 0;
+            font-family: 'SF Mono', 'Fira Code', monospace;
             font-size: 12px;
-            color: var(--text-dim);
-            margin-top: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
         }
 
+        .log-entry {
+            padding: 4px 16px;
+            display: flex;
+            gap: 10px;
+            line-height: 1.5;
+        }
+
+        .log-entry:hover { background: rgba(255,255,255,0.02); }
+        .log-time { color: var(--text-dim); flex-shrink: 0; }
+        .log-msg { word-break: break-word; }
+        .log-entry.info .log-msg { color: var(--text-dim); }
+        .log-entry.success .log-msg { color: var(--success); }
+        .log-entry.warn .log-msg { color: var(--warn); }
+        .log-entry.error .log-msg { color: var(--error); }
+
+        .log-empty {
+            padding: 24px;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 13px;
+            font-family: inherit;
+        }
+
+        /* Ignore rules section */
+        .ignore-section { margin-top: 24px; }
+        .ignore-section h3 { font-size: 14px; margin-bottom: 8px; }
+        .ignore-section p { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+
+        /* Server info */
         .server-info {
             background: var(--surface);
             border-radius: var(--radius);
@@ -221,34 +271,17 @@
             margin-bottom: 16px;
             font-size: 13px;
             color: var(--text-dim);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
         }
 
-        .server-info code {
-            color: var(--text);
-            font-family: 'SF Mono', 'Fira Code', monospace;
-        }
-
-        .actions {
-            display: flex;
-            gap: 12px;
-        }
-
-        .actions .btn {
-            width: auto;
-            flex: 1;
-        }
+        .server-info code { color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; }
 
         /* Screens */
         .screen { display: none; }
-        .screen.active { display: flex; }
+        .screen.active { display: block; }
+        #login-screen.active { display: flex; }
 
-        /* Loading spinner */
         .spinner {
-            width: 16px;
-            height: 16px;
+            width: 16px; height: 16px;
             border: 2px solid rgba(255,255,255,0.3);
             border-top-color: white;
             border-radius: 50%;
@@ -256,9 +289,14 @@
             margin-right: 8px;
         }
 
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
+
+        .watching-indicator { animation: pulse 2s ease-in-out infinite; }
     </style>
 </head>
 <body>
@@ -269,67 +307,158 @@
         <div class="login-card">
             <h1>🔐 Connect to izerop</h1>
             <p>Enter your server URL and API token to get started.</p>
-
             <div class="form-group">
                 <label for="server-url">Server URL</label>
                 <input type="text" id="server-url" placeholder="https://izerop.com" value="https://izerop.com">
             </div>
-
             <div class="form-group">
                 <label for="api-token">API Token</label>
                 <input type="password" id="api-token" placeholder="Your JWT token">
             </div>
-
-            <button class="btn" id="login-btn" onclick="login()">Connect</button>
+            <button class="btn btn-full" id="login-btn" onclick="login()">Connect</button>
             <div class="error-msg" id="login-error"></div>
         </div>
     </div>
 
-    <!-- Dashboard Screen -->
-    <div id="dashboard-screen" class="content screen">
-        <div class="dashboard">
-            <div class="dashboard-header">
-                <h1>📁 izerop</h1>
-                <span class="status-badge connected" id="status-badge">
-                    <span class="status-dot"></span>
-                    Connected
-                </span>
+    <!-- Main App Layout -->
+    <div id="app-layout" class="app-layout screen">
+        <div class="sidebar">
+            <div class="nav-item active" data-screen="dashboard" onclick="navigate('dashboard')">
+                <span class="icon">📊</span> Dashboard
+            </div>
+            <div class="nav-item" data-screen="sync" onclick="navigate('sync')">
+                <span class="icon">🔄</span> Sync
+            </div>
+            <div class="nav-item" data-screen="activity" onclick="navigate('activity')">
+                <span class="icon">📋</span> Activity
+            </div>
+            <div class="nav-item" data-screen="settings" onclick="navigate('settings')">
+                <span class="icon">⚙️</span> Settings
+            </div>
+        </div>
+
+        <div class="main-content">
+            <!-- Dashboard -->
+            <div id="page-dashboard" class="screen active">
+                <div class="section-header">
+                    <h2>Dashboard</h2>
+                    <span class="status-badge connected" id="conn-badge">
+                        <span class="status-dot"></span>
+                        <span id="conn-text">Connected</span>
+                    </span>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="file-count">-</div>
+                        <div class="stat-label">Files</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="dir-count">-</div>
+                        <div class="stat-label">Directories</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="storage-size">-</div>
+                        <div class="stat-label">Storage</div>
+                    </div>
+                </div>
+
+                <div class="server-info">
+                    Server: <code id="server-display"></code>
+                </div>
+
+                <div class="sync-dir-box">
+                    <div class="label">Sync Directory</div>
+                    <div class="path" id="dash-sync-dir"><span class="no-dir">Not configured</span></div>
+                </div>
+
+                <div class="btn-row">
+                    <button class="btn" onclick="refreshStatus()">↻ Refresh</button>
+                    <button class="btn btn-outline" onclick="logout()">Disconnect</button>
+                </div>
             </div>
 
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-value" id="file-count">-</div>
-                    <div class="stat-label">Files</div>
+            <!-- Sync -->
+            <div id="page-sync" class="screen">
+                <div class="section-header">
+                    <h2>Sync</h2>
+                    <span class="status-badge" id="watch-badge" style="display:none">
+                        <span class="status-dot watching-indicator"></span>
+                        <span>Watching</span>
+                    </span>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="dir-count">-</div>
-                    <div class="stat-label">Directories</div>
+
+                <div class="sync-dir-box">
+                    <div class="label">Sync Directory</div>
+                    <div class="path" id="sync-dir-display"><span class="no-dir">Not configured</span></div>
+                    <div class="btn-row">
+                        <button class="btn btn-sm btn-outline" onclick="pickSyncDir()">📁 Browse</button>
+                        <button class="btn btn-sm btn-outline" onclick="promptSyncDir()">✏️ Type Path</button>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="storage-size">-</div>
-                    <div class="stat-label">Storage</div>
+
+                <div class="btn-row" style="margin-bottom: 16px;">
+                    <button class="btn" id="sync-now-btn" onclick="runSync()">⚡ Sync Now</button>
+                    <button class="btn btn-success" id="watch-btn" onclick="toggleWatch()">👁 Start Watching</button>
+                </div>
+
+                <!-- Inline activity log -->
+                <div class="log-container">
+                    <div class="log-header">
+                        <h3>Recent Activity</h3>
+                        <button class="btn btn-sm btn-outline" onclick="clearLogs()">Clear</button>
+                    </div>
+                    <div class="log-entries" id="sync-log-entries">
+                        <div class="log-empty">No activity yet. Run a sync or start watching.</div>
+                    </div>
                 </div>
             </div>
 
-            <div class="server-info">
-                <span>Server: <code id="server-display"></code></span>
-                <span id="cursor-display"></span>
+            <!-- Activity (full log) -->
+            <div id="page-activity" class="screen">
+                <div class="section-header">
+                    <h2>Activity Log</h2>
+                    <button class="btn btn-sm btn-outline" onclick="clearLogs()">Clear All</button>
+                </div>
+
+                <div class="log-container">
+                    <div class="log-entries" id="activity-log-entries" style="max-height: 500px;">
+                        <div class="log-empty">No activity yet.</div>
+                    </div>
+                </div>
             </div>
 
-            <div class="actions">
-                <button class="btn" onclick="refreshStatus()">↻ Refresh</button>
-                <button class="btn btn-outline" onclick="logout()">Disconnect</button>
+            <!-- Settings -->
+            <div id="page-settings" class="screen">
+                <div class="section-header">
+                    <h2>Settings</h2>
+                </div>
+
+                <div class="sync-dir-box">
+                    <div class="label">Sync Directory</div>
+                    <div class="path" id="settings-sync-dir"><span class="no-dir">Not configured</span></div>
+                    <div class="btn-row">
+                        <button class="btn btn-sm btn-outline" onclick="pickSyncDir()">📁 Change</button>
+                    </div>
+                </div>
+
+                <div class="ignore-section">
+                    <h3>.izeropignore</h3>
+                    <p>One pattern per line. Works like .gitignore — supports globs, directory patterns, and negation.</p>
+                    <div class="form-group">
+                        <textarea id="ignore-rules" placeholder="# Example&#10;build/&#10;*.log&#10;.DS_Store&#10;node_modules/"></textarea>
+                    </div>
+                    <button class="btn btn-sm" onclick="saveIgnoreRules()">Save Ignore Rules</button>
+                </div>
+
+                <div style="margin-top: 24px;">
+                    <button class="btn btn-outline" onclick="logout()">🚪 Disconnect & Logout</button>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
-        // Wails runtime bindings
-        function showScreen(id) {
-            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-            document.getElementById(id).classList.add('active');
-        }
-
         function formatSize(bytes) {
             if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
             if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
@@ -337,12 +466,29 @@
             return bytes + ' B';
         }
 
+        function showScreen(id) {
+            document.querySelectorAll('body > .screen, body > .content.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+        }
+
+        function navigate(page) {
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            document.querySelector(`[data-screen="${page}"]`).classList.add('active');
+            document.querySelectorAll('.main-content > .screen').forEach(s => s.classList.remove('active'));
+            document.getElementById('page-' + page).classList.add('active');
+
+            if (page === 'activity') refreshLogs();
+            if (page === 'sync') { refreshSyncConfig(); refreshLogs(); }
+            if (page === 'settings') refreshSyncConfig();
+        }
+
         async function init() {
             try {
                 const status = await window.go.main.App.GetConnectionStatus();
                 if (status.connected && status.hasToken) {
-                    showScreen('dashboard-screen');
+                    showScreen('app-layout');
                     refreshStatus();
+                    refreshSyncConfig();
                 } else {
                     showScreen('login-screen');
                 }
@@ -357,10 +503,7 @@
             const server = document.getElementById('server-url').value.trim();
             const token = document.getElementById('api-token').value.trim();
 
-            if (!token) {
-                errEl.textContent = 'API token is required';
-                return;
-            }
+            if (!token) { errEl.textContent = 'API token is required'; return; }
 
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Connecting...';
@@ -369,8 +512,9 @@
             try {
                 const result = await window.go.main.App.Login(server, token);
                 if (result.success) {
-                    showScreen('dashboard-screen');
+                    showScreen('app-layout');
                     refreshStatus();
+                    refreshSyncConfig();
                 } else {
                     errEl.textContent = result.error;
                 }
@@ -382,40 +526,182 @@
             btn.textContent = 'Connect';
         }
 
-        async function refreshStatus() {
-            try {
-                const status = await window.go.main.App.GetStatus();
-                const badge = document.getElementById('status-badge');
-
-                if (status.connected) {
-                    badge.className = 'status-badge connected';
-                    badge.innerHTML = '<span class="status-dot"></span> Connected';
-                    document.getElementById('file-count').textContent = status.fileCount;
-                    document.getElementById('dir-count').textContent = status.directoryCount;
-                    document.getElementById('storage-size').textContent = formatSize(status.totalSize);
-                    document.getElementById('server-display').textContent = status.server;
-                    document.getElementById('cursor-display').textContent = status.cursor ? 'Last sync: ' + new Date(status.cursor).toLocaleString() : '';
-                } else {
-                    badge.className = 'status-badge disconnected';
-                    badge.innerHTML = '<span class="status-dot"></span> Disconnected';
-                }
-            } catch (e) {
-                console.error('Status refresh failed:', e);
-            }
-        }
-
         async function logout() {
             await window.go.main.App.Logout();
             document.getElementById('api-token').value = '';
             showScreen('login-screen');
         }
 
-        // Handle Enter key on login form
+        async function refreshStatus() {
+            try {
+                const s = await window.go.main.App.GetStatus();
+                const badge = document.getElementById('conn-badge');
+                const text = document.getElementById('conn-text');
+
+                if (s.connected) {
+                    badge.className = 'status-badge connected';
+                    text.textContent = 'Connected';
+                    document.getElementById('file-count').textContent = s.fileCount;
+                    document.getElementById('dir-count').textContent = s.directoryCount;
+                    document.getElementById('storage-size').textContent = formatSize(s.totalSize);
+                    document.getElementById('server-display').textContent = s.server;
+                } else {
+                    badge.className = 'status-badge disconnected';
+                    text.textContent = 'Disconnected';
+                }
+            } catch (e) {
+                console.error('Status refresh failed:', e);
+            }
+        }
+
+        async function refreshSyncConfig() {
+            try {
+                const cfg = await window.go.main.App.GetSyncConfig();
+                const dirs = ['dash-sync-dir', 'sync-dir-display', 'settings-sync-dir'];
+                dirs.forEach(id => {
+                    const el = document.getElementById(id);
+                    if (cfg.syncDir) {
+                        el.innerHTML = cfg.syncDir;
+                    } else {
+                        el.innerHTML = '<span class="no-dir">Not configured</span>';
+                    }
+                });
+
+                document.getElementById('ignore-rules').value = cfg.ignoreRules || '';
+
+                const watchBadge = document.getElementById('watch-badge');
+                const watchBtn = document.getElementById('watch-btn');
+                if (cfg.isWatching) {
+                    watchBadge.style.display = '';
+                    watchBadge.className = 'status-badge watching';
+                    watchBtn.textContent = '⏹ Stop Watching';
+                    watchBtn.className = 'btn btn-outline';
+                } else {
+                    watchBadge.style.display = 'none';
+                    watchBtn.textContent = '👁 Start Watching';
+                    watchBtn.className = 'btn btn-success';
+                }
+            } catch (e) {
+                console.error('Config refresh failed:', e);
+            }
+        }
+
+        async function pickSyncDir() {
+            const result = await window.go.main.App.SetSyncDir();
+            if (result.success) {
+                refreshSyncConfig();
+            } else if (result.error && result.error !== 'No directory selected') {
+                alert(result.error);
+            }
+        }
+
+        async function promptSyncDir() {
+            const path = prompt('Enter sync directory path:', '~/izerop');
+            if (path) {
+                const result = await window.go.main.App.SetSyncDirManual(path);
+                if (result.success) {
+                    refreshSyncConfig();
+                } else {
+                    alert(result.error);
+                }
+            }
+        }
+
+        async function runSync() {
+            const btn = document.getElementById('sync-now-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Syncing...';
+
+            const result = await window.go.main.App.RunSync();
+            if (!result.success) {
+                alert(result.error);
+            }
+
+            btn.disabled = false;
+            btn.textContent = '⚡ Sync Now';
+            refreshStatus();
+            refreshLogs();
+        }
+
+        async function toggleWatch() {
+            const cfg = await window.go.main.App.GetSyncConfig();
+            let result;
+            if (cfg.isWatching) {
+                result = await window.go.main.App.StopWatch();
+            } else {
+                result = await window.go.main.App.StartWatch();
+            }
+
+            if (!result.success) {
+                alert(result.error);
+            }
+
+            setTimeout(refreshSyncConfig, 500);
+            refreshLogs();
+        }
+
+        async function refreshLogs() {
+            const logs = await window.go.main.App.GetSyncLogs();
+            renderLogs('sync-log-entries', logs);
+            renderLogs('activity-log-entries', logs);
+        }
+
+        function renderLogs(containerId, logs) {
+            const el = document.getElementById(containerId);
+            if (!logs || logs.length === 0) {
+                el.innerHTML = '<div class="log-empty">No activity yet.</div>';
+                return;
+            }
+
+            el.innerHTML = logs.map(l =>
+                `<div class="log-entry ${l.level}">
+                    <span class="log-time">${l.time}</span>
+                    <span class="log-msg">${escapeHtml(l.message)}</span>
+                </div>`
+            ).join('');
+
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function escapeHtml(s) {
+            return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+
+        async function clearLogs() {
+            await window.go.main.App.ClearLogs();
+            refreshLogs();
+        }
+
+        async function saveIgnoreRules() {
+            const rules = document.getElementById('ignore-rules').value;
+            const result = await window.go.main.App.SaveIgnoreRules(rules);
+            if (result.success) {
+                alert('Ignore rules saved!');
+            } else {
+                alert(result.error);
+            }
+        }
+
+        // Listen for real-time sync log events
+        if (window.runtime) {
+            window.runtime.EventsOn('sync-log', (entry) => {
+                refreshLogs();
+            });
+
+            window.runtime.EventsOn('watch-stopped', () => {
+                refreshSyncConfig();
+            });
+
+            window.runtime.EventsOn('sync-complete', () => {
+                refreshStatus();
+                refreshLogs();
+            });
+        }
+
         document.getElementById('api-token').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') login();
         });
 
-        // Init on load
         init();
     </script>
 </body>
