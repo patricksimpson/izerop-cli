@@ -343,6 +343,54 @@ make clean          # Remove build artifacts
 
 Releases are automated via GitHub Actions — push a `v*` tag to create a release with pre-built binaries.
 
+## Desktop App
+
+A native desktop app is available for all platforms. Download the appropriate file from [Releases](https://github.com/patricksimpson/izerop-cli/releases).
+
+### macOS
+
+1. Download `izerop-desktop-macos-arm64.zip` (Apple Silicon) or `izerop-desktop-macos-amd64.zip` (Intel)
+2. Unzip and drag `izerop.app` to your Applications folder
+3. **First launch:** macOS will block the app because it's unsigned. To bypass:
+   - Right-click (or Control-click) `izerop.app` → **Open**
+   - Click **Open** in the dialog that appears
+   - Alternatively: **System Settings → Privacy & Security** → scroll down and click **Open Anyway**
+   - You only need to do this once
+
+### Windows
+
+1. Download `izerop-desktop-windows-amd64.exe`
+2. **First launch:** Windows SmartScreen may block the app:
+   - Click **More info**
+   - Click **Run anyway**
+3. Optionally move the `.exe` to a permanent location like `C:\Program Files\izerop\`
+
+### Linux
+
+1. Download `izerop-desktop-linux-amd64`
+2. Make it executable and run:
+   ```bash
+   chmod +x izerop-desktop-linux-amd64
+   ./izerop-desktop-linux-amd64
+   ```
+3. **Dependencies:** The desktop app requires GTK3 and WebKit2GTK:
+   - **Ubuntu/Debian:** `sudo apt install libgtk-3-0 libwebkit2gtk-4.0-37`
+   - **Fedora:** `sudo dnf install gtk3 webkit2gtk4.0`
+   - **Arch:** `sudo pacman -S gtk3 webkit2gtk-4.1`
+
+### Building from Source
+
+```bash
+# Requires Go 1.25+ and Wails CLI
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+# Build
+make desktop
+
+# Or build + run in dev mode
+make desktop-dev
+```
+
 ## Roadmap
 
 - [x] Authentication and config management
@@ -355,8 +403,10 @@ Releases are automated via GitHub Actions — push a `v*` tag to create a releas
 - [x] Background daemon mode with logging
 - [x] Self-updater from GitHub releases
 - [x] Cross-platform release builds
-- [ ] Selective sync (ignore patterns)
-- [ ] Wails GUI wrapper
+- [x] Selective sync (.izeropignore patterns)
+- [x] Desktop GUI app (Wails)
+- [x] Cross-platform desktop builds (macOS, Windows, Linux)
+- [ ] System tray integration
 
 ## License
 
