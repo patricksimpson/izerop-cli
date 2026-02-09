@@ -421,6 +421,7 @@
             <div class="nav-item" onclick="logout()" style="color: var(--error);">
                 <span class="icon">🚪</span> Logout
             </div>
+            <div id="version-label" style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 8px 0; opacity: 0.5;"></div>
         </div>
 
         <div class="main-content">
@@ -805,6 +806,10 @@
         document.getElementById('api-token').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') login();
         });
+
+        window.go.main.App.GetVersion().then(v => {
+            document.getElementById('version-label').textContent = 'v' + v;
+        }).catch(() => {});
 
         init();
     </script>

@@ -432,6 +432,10 @@ func (a *App) GetSyncLogs() []LogEntry {
 	return result
 }
 
+func (a *App) GetVersion() string {
+	return version
+}
+
 func (a *App) ClearLogs() {
 	a.logMu.Lock()
 	a.logs = nil
