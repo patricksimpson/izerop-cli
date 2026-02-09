@@ -17,12 +17,13 @@ import (
 
 // Config holds watcher configuration.
 type Config struct {
-	SyncDir    string
-	ServerURL  string
-	Client     *api.Client
+	SyncDir      string
+	ServerURL    string
+	Client       *api.Client
 	PollInterval time.Duration // how often to poll server for remote changes
-	Verbose    bool
-	Logger     *log.Logger
+	SettleTime   time.Duration // debounce delay before pushing local changes (default 12s)
+	Verbose      bool
+	Logger       *log.Logger
 }
 
 // Watcher monitors a directory and syncs changes.
@@ -54,8 +55,13 @@ func New(cfg Config) (*Watcher, error) {
 
 // Run starts the watcher. Blocks until stopped.
 func (w *Watcher) Run() error {
+	// Default settle time if not set
+	if w.cfg.SettleTime == 0 {
+		w.cfg.SettleTime = 12 * time.Second
+	}
+
 	w.cfg.Logger.Printf("Watching: %s ↔ %s", w.cfg.SyncDir, w.cfg.ServerURL)
-	w.cfg.Logger.Printf("Poll interval: %s, fsnotify: enabled", w.cfg.PollInterval)
+	w.cfg.Logger.Printf("Poll interval: %s, settle time: %s, fsnotify: enabled", w.cfg.PollInterval, w.cfg.SettleTime)
 
 	// Add the sync dir and all subdirs to fsnotify
 	if err := w.addWatchRecursive(w.cfg.SyncDir); err != nil {
@@ -96,11 +102,12 @@ func (w *Watcher) Run() error {
 				}
 			}
 
-			// Debounce: reset timer on each event, push after 2s of quiet
+			// Debounce: reset timer on each event, push after settle time of quiet
+			// This gives the user time to finish renaming files/folders before sync fires
 			if debounce != nil {
 				debounce.Stop()
 			}
-			debounce = time.AfterFunc(2*time.Second, func() {
+			debounce = time.AfterFunc(w.cfg.SettleTime, func() {
 				select {
 				case w.pushCh <- struct{}{}:
 				default:

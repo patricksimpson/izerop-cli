@@ -352,11 +352,17 @@ func (a *App) StartWatch() ActionResult {
 	}
 	a.watchMu.Unlock()
 
+	settleMs := a.cfg.SettleTimeMs
+	if settleMs <= 0 {
+		settleMs = config.DefaultSettleTimeMs
+	}
+
 	w, err := watcher.New(watcher.Config{
 		SyncDir:      a.cfg.SyncDir,
 		ServerURL:    a.cfg.ServerURL,
 		Client:       a.client,
 		PollInterval: 30 * time.Second,
+		SettleTime:   time.Duration(settleMs) * time.Millisecond,
 		Logger:       a.newLogger(),
 	})
 	if err != nil {

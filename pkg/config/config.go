@@ -9,10 +9,15 @@ import (
 
 // Config holds the CLI configuration.
 type Config struct {
-	ServerURL string `json:"server_url"`
-	Token     string `json:"token"`
-	SyncDir   string `json:"sync_dir,omitempty"`
+	ServerURL    string `json:"server_url"`
+	Token        string `json:"token"`
+	SyncDir      string `json:"sync_dir,omitempty"`
+	SettleTimeMs int    `json:"settle_time_ms,omitempty"` // debounce delay before syncing new/changed files (default 12000)
 }
+
+// DefaultSettleTimeMs is the default debounce delay in milliseconds.
+// This gives users time to finish renaming files/folders before sync fires.
+const DefaultSettleTimeMs = 12000
 
 // DefaultConfigDir returns the config directory path (~/.config/izerop).
 func DefaultConfigDir() (string, error) {
@@ -59,6 +64,11 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv("IZEROP_SYNC_DIR"); v != "" {
 		cfg.SyncDir = v
+	}
+
+	// Default settle time if not set
+	if cfg.SettleTimeMs <= 0 {
+		cfg.SettleTimeMs = DefaultSettleTimeMs
 	}
 
 	if cfg.ServerURL == "" {

@@ -591,11 +591,14 @@ func cmdWatch(cfg *config.Config) {
 
 	client := newClient(cfg)
 
+	settleTime := time.Duration(cfg.SettleTimeMs) * time.Millisecond
+
 	w, err := watcher.New(watcher.Config{
 		SyncDir:      syncDir,
 		ServerURL:    cfg.ServerURL,
 		Client:       client,
 		PollInterval: interval,
+		SettleTime:   settleTime,
 		Verbose:      verbose,
 		Logger:       logger,
 	})
