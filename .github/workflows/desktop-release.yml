@@ -1,0 +1,111 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Build Linux
+        run: |
+          cd cmd/desktop
+          wails build -platform linux/amd64
+          mv build/bin/izerop-desktop ../../izerop-desktop-linux-amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: izerop-desktop-linux-amd64
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Build macOS
+        run: |
+          cd cmd/desktop
+          wails build -platform darwin/${{ matrix.arch }}
+          cd build/bin
+          # Package .app into a zip
+          zip -r ../../../../izerop-desktop-macos-${{ matrix.arch }}.zip izerop-desktop.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-build
+          path: izerop-desktop-macos-${{ matrix.arch }}.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Build Windows
+        run: |
+          cd cmd/desktop
+          wails build -platform windows/amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: cmd/desktop/build/bin/izerop-desktop.exe
+
+  release:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect binaries
+        run: |
+          mkdir -p dist
+          cp artifacts/linux-build/izerop-desktop-linux-amd64 dist/
+          cp artifacts/macos-amd64-build/izerop-desktop-macos-amd64.zip dist/
+          cp artifacts/macos-arm64-build/izerop-desktop-macos-arm64.zip dist/
+          cp artifacts/windows-build/izerop-desktop.exe dist/izerop-desktop-windows-amd64.exe
+          ls -la dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
