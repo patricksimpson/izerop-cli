@@ -97,7 +97,11 @@ func main() {
 	case "update":
 		cmdUpdate()
 	case "help":
-		printUsage()
+		if len(os.Args) > 2 {
+			printCommandHelp(os.Args[2])
+		} else {
+			printUsage()
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -794,6 +798,162 @@ func formatSize(bytes int64) string {
 		return fmt.Sprintf("%.1f KB", float64(bytes)/float64(KB))
 	default:
 		return fmt.Sprintf("%d B", bytes)
+	}
+}
+
+func printCommandHelp(cmd string) {
+	help := map[string]string{
+		"login": `izerop login
+
+  Authenticate with an izerop server. Prompts for server URL and API token.
+  Config is saved to ~/.config/izerop/config.json.
+
+  Examples:
+    izerop login
+    izerop --server http://localhost:3000 login`,
+
+		"status": `izerop status
+
+  Show server connection, file/directory counts, storage usage, and sync cursor.
+
+  Examples:
+    izerop status
+    izerop --server http://localhost:3000 status`,
+
+		"sync": `izerop sync [<directory>] [options]
+
+  Run a one-shot bidirectional sync between a local directory and the server.
+  Downloads remote changes first, then uploads local changes.
+
+  Options:
+    --pull-only    Only download remote changes
+    --push-only    Only upload local changes
+    -v, --verbose  Show detailed output
+
+  Examples:
+    izerop sync                    # sync current directory
+    izerop sync ~/izerop           # sync a specific directory
+    izerop sync --pull-only        # download only
+    izerop sync ~/izerop -v        # verbose output`,
+
+		"watch": `izerop watch [<directory>] [options]
+
+  Watch a directory and sync continuously. Uses fsnotify for instant local
+  change detection and periodic server polling for remote changes.
+
+  Options:
+    --interval N   Server poll interval in seconds (default: 30)
+    -d, --daemon   Run in background (writes PID file)
+    --log <path>   Log file path (default: ~/.config/izerop/watch.log)
+    -v, --verbose  Log every poll tick, not just changes
+    --stop         Stop a running daemon
+
+  Examples:
+    izerop watch                          # watch current dir (foreground)
+    izerop watch ~/izerop                 # watch specific dir
+    izerop watch --interval 10            # poll every 10s
+    izerop watch ~/izerop --daemon        # run in background
+    izerop watch --stop                   # stop background watcher`,
+
+		"logs": `izerop logs [options]
+
+  View the watch daemon's log output.
+
+  Options:
+    -n, --tail N     Number of lines to show (default: 50)
+    -f, --follow     Follow log output (like tail -f)
+    --path <file>    Use a custom log file path
+
+  Examples:
+    izerop logs                   # last 50 lines
+    izerop logs --tail 100        # last 100 lines
+    izerop logs --follow          # tail -f style`,
+
+		"push": `izerop push <file> [options]
+
+  Upload a file to the server.
+
+  Options:
+    --dir <id>     Target directory ID
+    --name <name>  Override the filename on the server
+
+  Examples:
+    izerop push photo.jpg --dir abc123
+    izerop push IMG_001.jpg --dir abc123 --name vacation.jpg`,
+
+		"pull": `izerop pull <file-id> [options]
+
+  Download a file by ID.
+
+  Options:
+    --out <path>   Save to a specific local path (default: auto-named)
+
+  Examples:
+    izerop pull abc123                   # auto-named from server
+    izerop pull abc123 --out photo.jpg   # save to specific path`,
+
+		"ls": `izerop ls [<directory-id>]
+
+  List remote directories and files with names, sizes, timestamps, and IDs.
+
+  Examples:
+    izerop ls              # list all directories and files
+    izerop ls abc123       # list files in a specific directory`,
+
+		"mkdir": `izerop mkdir <name> [options]
+
+  Create a remote directory.
+
+  Options:
+    --parent <id>  Parent directory ID (for subdirectories)
+
+  Examples:
+    izerop mkdir photos                        # top-level directory
+    izerop mkdir thumbnails --parent abc123     # subdirectory`,
+
+		"rm": `izerop rm <id> [options]
+
+  Delete a file or directory (soft-delete on server).
+
+  Options:
+    --dir   Treat the ID as a directory (default: file)
+
+  Examples:
+    izerop rm abc123           # delete a file
+    izerop rm abc123 --dir     # delete a directory`,
+
+		"mv": `izerop mv <file-id> [options]
+
+  Move or rename a file.
+
+  Options:
+    --name <name>  New filename
+    --dir <id>     Move to a different directory
+
+  Examples:
+    izerop mv abc123 --name new-name.txt
+    izerop mv abc123 --dir def456
+    izerop mv abc123 --name new-name.txt --dir def456`,
+
+		"update": `izerop update
+
+  Self-update to the latest GitHub release. Downloads the correct binary
+  for your OS and architecture, then replaces the current executable.
+
+  Examples:
+    izerop update`,
+
+		"version": `izerop version
+
+  Print the current version.`,
+	}
+
+	if h, ok := help[cmd]; ok {
+		fmt.Println(h)
+	} else {
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
+		printUsage()
+		os.Exit(1)
 	}
 }
 
