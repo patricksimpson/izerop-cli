@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -572,11 +573,17 @@ func cmdWatch(cfg *config.Config) {
 		logger = log.New(logFile, "", log.LstdFlags)
 	}
 
-	// Write PID file
+	// Write PID file and daemon args
 	pidPath := pidFilePath()
 	os.MkdirAll(filepath.Dir(pidPath), 0755)
 	os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
 	defer os.Remove(pidPath)
+
+	// Save watch args for restart after update
+	watchArgs := os.Args[1:] // everything after the binary name
+	argsData, _ := json.Marshal(watchArgs)
+	os.WriteFile(watchArgsPath(), argsData, 0644)
+	defer os.Remove(watchArgsPath())
 
 	client := newClient(cfg)
 
@@ -659,6 +666,11 @@ func defaultLogPath() string {
 func pidFilePath() string {
 	dir, _ := os.UserConfigDir()
 	return filepath.Join(dir, "izerop", "watch.pid")
+}
+
+func watchArgsPath() string {
+	dir, _ := os.UserConfigDir()
+	return filepath.Join(dir, "izerop", "watch.args.json")
 }
 
 func cmdWatchStop() {
@@ -780,7 +792,52 @@ func cmdUpdate() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Updated to %s! Restart to use the new version.\n", release.TagName)
+	fmt.Printf("✅ Updated to %s!\n", release.TagName)
+
+	// Restart daemon if running
+	pidPath := pidFilePath()
+	if data, err := os.ReadFile(pidPath); err == nil {
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err == nil {
+			if proc, err := os.FindProcess(pid); err == nil {
+				if err := proc.Signal(syscall.Signal(0)); err == nil {
+					// Daemon is running — stop it
+					fmt.Printf("Restarting watcher daemon (PID %d)...\n", pid)
+					proc.Signal(syscall.SIGTERM)
+					// Wait briefly for it to stop
+					time.Sleep(1 * time.Second)
+					os.Remove(pidPath)
+
+					// Re-launch with saved watch args
+					execPath, _ := os.Executable()
+					watchArgs := []string{"watch", "--daemon"}
+					if argsData, err := os.ReadFile(watchArgsPath()); err == nil {
+						var savedArgs []string
+						if json.Unmarshal(argsData, &savedArgs) == nil && len(savedArgs) > 0 {
+							// Ensure --daemon is present
+							hasDaemon := false
+							for _, a := range savedArgs {
+								if a == "--daemon" || a == "-d" {
+									hasDaemon = true
+								}
+							}
+							if !hasDaemon {
+								savedArgs = append(savedArgs, "--daemon")
+							}
+							watchArgs = savedArgs
+						}
+					}
+					newProc := exec.Command(execPath, watchArgs...)
+					newProc.Stdout = os.Stdout
+					newProc.Stderr = os.Stderr
+					if err := newProc.Run(); err != nil {
+						fmt.Fprintf(os.Stderr, "⚠ Could not restart daemon: %v\n", err)
+						fmt.Fprintf(os.Stderr, "  Start manually: izerop watch <dir> --daemon\n")
+					}
+				}
+			}
+		}
+	}
 }
 
 func formatSize(bytes int64) string {
