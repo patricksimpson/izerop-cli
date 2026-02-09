@@ -59,10 +59,10 @@ func (a *App) startup(ctx context.Context) {
 	go a.startTray()
 }
 
-// beforeClose hides to tray instead of quitting
+// beforeClose hides to tray instead of quitting (only if tray is active)
 func (a *App) beforeClose(ctx context.Context) bool {
-	runtime.WindowHide(ctx)
-	return true // prevent actual close
+	// For now, allow normal close — tray minimize can be opt-in later
+	return false
 }
 
 // ---- Log capture ----
