@@ -17,6 +17,9 @@ type Engine struct {
 	Client  *api.Client
 	SyncDir string
 	Verbose bool
+	// RootDir is the name of the remote root directory (e.g. "root").
+	// Remote paths under this dir map directly to the local sync dir.
+	RootDir string
 }
 
 // NewEngine creates a sync engine.
@@ -24,6 +27,7 @@ func NewEngine(client *api.Client, syncDir string) *Engine {
 	return &Engine{
 		Client:  client,
 		SyncDir: syncDir,
+		RootDir: "root",
 	}
 }
 
@@ -36,8 +40,31 @@ type SyncResult struct {
 	Errors     []string
 }
 
+// remoteToLocal converts a remote path to a local path.
+// Strips the root directory prefix so /root/foo.txt → foo.txt
+// and /root/gallery/pic.jpg → gallery/pic.jpg
+func (e *Engine) remoteToLocal(remotePath string) string {
+	prefix := "/" + e.RootDir
+	if strings.HasPrefix(remotePath, prefix+"/") {
+		return remotePath[len(prefix)+1:]
+	}
+	if strings.HasPrefix(remotePath, prefix) && len(remotePath) == len(prefix) {
+		return ""
+	}
+	// For paths not under root (e.g. /photos/), keep as-is minus leading slash
+	if strings.HasPrefix(remotePath, "/") {
+		return remotePath[1:]
+	}
+	return remotePath
+}
+
+// localToRemote converts a local relative path to a remote path.
+// Prepends the root directory so foo.txt → /root/foo.txt
+func (e *Engine) localToRemote(localRel string) string {
+	return "/" + e.RootDir + "/" + filepath.ToSlash(localRel)
+}
+
 // PullSync downloads remote changes to the local sync directory.
-// Uses the changes API with a cursor to only fetch what's new.
 func (e *Engine) PullSync(cursor string) (*SyncResult, string, error) {
 	result := &SyncResult{}
 
@@ -87,7 +114,20 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 		remoteDirsByPath[d.Path] = d
 	}
 
-	// Get ALL remote files (across all directories) indexed by path
+	// Find or verify root directory exists
+	rootPath := "/" + e.RootDir
+	rootDir, rootExists := remoteDirsByPath[rootPath]
+	if !rootExists {
+		// Create root directory
+		dir, err := e.Client.CreateDirectory(e.RootDir, "")
+		if err != nil {
+			return nil, fmt.Errorf("could not create root directory: %w", err)
+		}
+		rootDir = *dir
+		remoteDirsByPath[rootPath] = rootDir
+	}
+
+	// Get ALL remote files indexed by path
 	remoteFilesByPath := make(map[string]api.FileEntry)
 	files, err := e.Client.ListFiles("")
 	if err != nil {
@@ -98,9 +138,9 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 	}
 
 	// Walk local directory
-	err = filepath.Walk(e.SyncDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("walk error: %s: %v", path, err))
+	err = filepath.Walk(e.SyncDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("walk error: %s: %v", path, walkErr))
 			return nil
 		}
 
@@ -117,27 +157,28 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 			return nil
 		}
 
-		// Build the remote-style path
-		remotePath := "/" + filepath.ToSlash(relPath)
+		// Build the remote path (under root dir)
+		remotePath := e.localToRemote(relPath)
 
 		if info.IsDir() {
-			// Check if directory exists remotely
 			if _, exists := remoteDirsByPath[remotePath]; !exists {
-				// Find or create parent directory
-				parentPath := filepath.Dir(remotePath)
+				// Find parent directory ID
+				parentRemotePath := filepath.Dir(remotePath)
+				parentRemotePath = filepath.ToSlash(parentRemotePath)
 				parentID := ""
-				if parentPath != "/" {
-					if parent, ok := remoteDirsByPath[parentPath]; ok {
-						parentID = parent.ID
-					}
+				if parent, ok := remoteDirsByPath[parentRemotePath]; ok {
+					parentID = parent.ID
+				} else {
+					// Parent is root
+					parentID = rootDir.ID
 				}
 
 				if e.Verbose {
 					fmt.Printf("  📁 Creating: %s\n", remotePath)
 				}
-				dir, err := e.Client.CreateDirectory(info.Name(), parentID)
-				if err != nil {
-					result.Errors = append(result.Errors, fmt.Sprintf("mkdir %s: %v", remotePath, err))
+				dir, createErr := e.Client.CreateDirectory(info.Name(), parentID)
+				if createErr != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("mkdir %s: %v", remotePath, createErr))
 				} else {
 					remoteDirsByPath[remotePath] = *dir
 				}
@@ -148,33 +189,72 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 		// It's a file — check if it needs uploading
 		remoteFile, exists := remoteFilesByPath[remotePath]
 		if exists {
-			// Compare sizes as a quick check
 			if remoteFile.Size == info.Size() {
 				result.Skipped++
+				return nil
+			}
+
+			// File exists but size differs — update it
+			if remoteFile.HasText {
+				// Text file: read local contents and update via API
+				contents, readErr := os.ReadFile(path)
+				if readErr != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("read %s: %v", relPath, readErr))
+					return nil
+				}
+				if e.Verbose {
+					fmt.Printf("  📝 Updating text: %s\n", relPath)
+				}
+				_, updateErr := e.Client.UpdateFile(remoteFile.ID, map[string]string{
+					"contents": string(contents),
+				})
+				if updateErr != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("update %s: %v", relPath, updateErr))
+				} else {
+					result.Uploaded++
+				}
 				return nil
 			}
 		}
 
 		// Find the directory ID for this file
-		dirPath := filepath.Dir(remotePath)
+		dirRemotePath := filepath.ToSlash(filepath.Dir(remotePath))
 		dirID := ""
-		if dir, ok := remoteDirsByPath[dirPath]; ok {
+		if dir, ok := remoteDirsByPath[dirRemotePath]; ok {
 			dirID = dir.ID
 		}
 
 		if dirID == "" {
-			result.Errors = append(result.Errors, fmt.Sprintf("no remote directory for %s (dir: %s)", remotePath, dirPath))
+			result.Errors = append(result.Errors, fmt.Sprintf("no remote directory for %s (dir: %s)", remotePath, dirRemotePath))
 			return nil
 		}
 
-		if e.Verbose {
-			fmt.Printf("  ⬆ Uploading: %s\n", remotePath)
-		}
-		_, uploadErr := e.Client.UploadFile(path, dirID, info.Name())
-		if uploadErr != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("upload %s: %v", remotePath, uploadErr))
+		// Decide: text file or binary upload?
+		if isTextFile(path, info) {
+			contents, readErr := os.ReadFile(path)
+			if readErr != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("read %s: %v", relPath, readErr))
+				return nil
+			}
+			if e.Verbose {
+				fmt.Printf("  📝 Creating text: %s\n", relPath)
+			}
+			_, createErr := e.Client.CreateTextFile(info.Name(), string(contents), dirID, "")
+			if createErr != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("create text %s: %v", relPath, createErr))
+			} else {
+				result.Uploaded++
+			}
 		} else {
-			result.Uploaded++
+			if e.Verbose {
+				fmt.Printf("  ⬆ Uploading: %s\n", relPath)
+			}
+			_, uploadErr := e.Client.UploadFile(path, dirID, info.Name())
+			if uploadErr != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("upload %s: %v", relPath, uploadErr))
+			} else {
+				result.Uploaded++
+			}
 		}
 
 		return nil
@@ -187,8 +267,54 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 	return result, nil
 }
 
+// isTextFile determines if a file should be treated as a text file.
+// Files without extensions or with known text extensions are text files.
+func isTextFile(path string, info os.FileInfo) bool {
+	ext := strings.ToLower(filepath.Ext(info.Name()))
+
+	// No extension = text file
+	if ext == "" {
+		return true
+	}
+
+	// Known text extensions
+	textExts := map[string]bool{
+		".txt": true, ".md": true, ".json": true, ".yml": true,
+		".yaml": true, ".xml": true, ".html": true, ".css": true,
+		".js": true, ".ts": true, ".rb": true, ".py": true,
+		".go": true, ".sh": true, ".bash": true, ".toml": true,
+		".csv": true, ".log": true, ".env": true, ".conf": true,
+		".cfg": true, ".ini": true, ".sql": true, ".svg": true,
+	}
+
+	if textExts[ext] {
+		return true
+	}
+
+	// Small files without binary content are likely text
+	if info.Size() < 1024*100 { // < 100KB
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		// Check for null bytes (binary indicator)
+		for _, b := range data {
+			if b == 0 {
+				return false
+			}
+		}
+		return true
+	}
+
+	return false
+}
+
 func (e *Engine) handleDirectoryChange(change api.Change, result *SyncResult) {
-	localPath := filepath.Join(e.SyncDir, change.Path)
+	localRel := e.remoteToLocal(change.Path)
+	if localRel == "" {
+		return // root dir itself, skip
+	}
+	localPath := filepath.Join(e.SyncDir, localRel)
 
 	switch change.Action {
 	case "created", "modified":
@@ -196,7 +322,6 @@ func (e *Engine) handleDirectoryChange(change api.Change, result *SyncResult) {
 			result.Errors = append(result.Errors, fmt.Sprintf("mkdir %s: %v", localPath, err))
 		}
 	case "deleted":
-		// Only remove if empty
 		entries, _ := os.ReadDir(localPath)
 		if len(entries) == 0 {
 			os.Remove(localPath)
@@ -206,14 +331,17 @@ func (e *Engine) handleDirectoryChange(change api.Change, result *SyncResult) {
 }
 
 func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
-	localPath := filepath.Join(e.SyncDir, change.Path)
+	localRel := e.remoteToLocal(change.Path)
+	if localRel == "" {
+		return
+	}
+	localPath := filepath.Join(e.SyncDir, localRel)
 
 	switch change.Action {
 	case "created", "modified":
 		// Ensure parent directory exists
 		os.MkdirAll(filepath.Dir(localPath), 0755)
 
-		// Download the file
 		f, err := os.Create(localPath)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("create %s: %v", localPath, err))
@@ -229,7 +357,7 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 		}
 
 		if e.Verbose {
-			fmt.Printf("  ⬇ %s\n", change.Path)
+			fmt.Printf("  ⬇ %s → %s\n", change.Path, localRel)
 		}
 		result.Downloaded++
 
@@ -237,7 +365,7 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 		if _, err := os.Stat(localPath); err == nil {
 			os.Remove(localPath)
 			if e.Verbose {
-				fmt.Printf("  🗑 %s\n", change.Path)
+				fmt.Printf("  🗑 %s\n", localRel)
 			}
 			result.Deleted++
 		}

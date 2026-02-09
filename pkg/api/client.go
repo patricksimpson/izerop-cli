@@ -80,9 +80,12 @@ type FileEntry struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Path        string `json:"path"`
+	DirectoryID string `json:"directory_id"`
 	Size        int64  `json:"size"`
 	ContentType string `json:"content_type"`
 	Public      bool   `json:"public"`
+	HasBinary   bool   `json:"has_binary"`
+	HasText     bool   `json:"has_text"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
@@ -305,6 +308,61 @@ func (c *Client) DownloadFile(fileID string, dest io.Writer) (string, error) {
 	}
 
 	return filename, nil
+}
+
+// CreateTextFile creates a text file (stored in DB, not S3).
+func (c *Client) CreateTextFile(name, contents, directoryID, contentType string) (*FileEntry, error) {
+	if contentType == "" {
+		contentType = "text/plain"
+	}
+	payload := map[string]string{
+		"name":         name,
+		"contents":     contents,
+		"directory_id": directoryID,
+		"content_type": contentType,
+	}
+	data, _ := json.Marshal(payload)
+	resp, err := c.do("POST", "/api/v1/files/text", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("create text file failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var wrapper struct {
+		File FileEntry `json:"file"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
+		return nil, fmt.Errorf("could not decode response: %w", err)
+	}
+	return &wrapper.File, nil
+}
+
+// UpdateFile updates a file's contents or metadata.
+func (c *Client) UpdateFile(fileID string, updates map[string]string) (*FileEntry, error) {
+	data, _ := json.Marshal(updates)
+	resp, err := c.do("PATCH", fmt.Sprintf("/api/v1/files/%s", fileID), bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("update file failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var wrapper struct {
+		File FileEntry `json:"file"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
+		return nil, fmt.Errorf("could not decode response: %w", err)
+	}
+	return &wrapper.File, nil
 }
 
 // CreateDirectory creates a new directory on the server.
