@@ -1,9 +1,11 @@
 BINARY := izerop
-VERSION := 0.5.2
-LDFLAGS := -ldflags "-s -w"
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 PREFIX := /usr/local
 
-.PHONY: build install uninstall clean test
+PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+
+.PHONY: build install uninstall clean test release
 
 build:
 	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/izerop
@@ -30,8 +32,20 @@ update:
 	@git pull
 	@$(MAKE) install
 
+release: clean
+	@mkdir -p dist
+	@for platform in $(PLATFORMS); do \
+		os=$${platform%/*}; \
+		arch=$${platform#*/}; \
+		output="dist/$(BINARY)-$${os}-$${arch}"; \
+		if [ "$$os" = "windows" ]; then output="$${output}.exe"; fi; \
+		echo "Building $$output..."; \
+		GOOS=$$os GOARCH=$$arch go build $(LDFLAGS) -o $$output ./cmd/izerop; \
+	done
+	@echo "✅ Release binaries in dist/"
+
 clean:
-	rm -rf bin/
+	rm -rf bin/ dist/
 
 test:
 	go test ./...

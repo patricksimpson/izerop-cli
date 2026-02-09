@@ -11,9 +11,11 @@ import (
 	"github.com/patricksimpson/izerop-cli/pkg/api"
 	"github.com/patricksimpson/izerop-cli/pkg/config"
 	"github.com/patricksimpson/izerop-cli/pkg/sync"
+	"github.com/patricksimpson/izerop-cli/pkg/updater"
 )
 
-const version = "0.5.3"
+// version is set at build time via -ldflags
+var version = "dev"
 
 func main() {
 	// Extract --server flag before command parsing
@@ -51,7 +53,8 @@ func main() {
 
 	switch os.Args[1] {
 	case "version":
-		fmt.Printf("izerop-cli v%s\n", version)
+		v := strings.TrimPrefix(version, "v")
+		fmt.Printf("izerop-cli v%s\n", v)
 	case "login":
 		if err := auth.Login(); err != nil {
 			fmt.Fprintf(os.Stderr, "Login failed: %v\n", err)
@@ -69,6 +72,8 @@ func main() {
 		cmdList(cfg)
 	case "mkdir":
 		cmdMkdir(cfg)
+	case "update":
+		cmdUpdate()
 	case "help":
 		printUsage()
 	default:
@@ -390,6 +395,40 @@ func cmdMkdir(cfg *config.Config) {
 	fmt.Printf("✅ Created: %s/ (%s)\n", dir.Name, dir.ID)
 }
 
+func cmdUpdate() {
+	v := strings.TrimPrefix(version, "v")
+	fmt.Printf("Current version: v%s\n", v)
+	fmt.Println("Checking for updates...")
+
+	release, err := updater.CheckForUpdate(v)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Update check failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	if release == nil {
+		fmt.Println("✅ Already up to date!")
+		return
+	}
+
+	fmt.Printf("New version available: %s\n", release.TagName)
+
+	asset := updater.FindAsset(release)
+	if asset == nil {
+		fmt.Fprintf(os.Stderr, "No binary available for your platform. Download manually:\n  %s\n", release.HTMLURL)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Downloading %s (%s)...\n", asset.Name, formatSize(asset.Size))
+
+	if err := updater.DownloadAndReplace(asset); err != nil {
+		fmt.Fprintf(os.Stderr, "Update failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Updated to %s! Restart to use the new version.\n", release.TagName)
+}
+
 func formatSize(bytes int64) string {
 	const (
 		KB = 1024
@@ -421,6 +460,7 @@ Commands:
   push      Upload files to server
   pull      Download files from server
   ls        List remote files and directories
+  update    Self-update to latest release
   version   Print version
   help      Show this help
 
