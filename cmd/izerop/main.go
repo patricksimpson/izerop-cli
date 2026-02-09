@@ -76,6 +76,10 @@ func main() {
 		cmdList(cfg)
 	case "mkdir":
 		cmdMkdir(cfg)
+	case "rm":
+		cmdRm(cfg)
+	case "mv":
+		cmdMv(cfg)
 	case "watch":
 		cmdWatch(cfg)
 	case "update":
@@ -170,8 +174,8 @@ func cmdSync(cfg *config.Config) {
 			fmt.Fprintf(os.Stderr, "Pull error: %v\n", err)
 		} else {
 			state.Cursor = newCursor
-			fmt.Printf("  Downloaded: %d, Deleted: %d, Skipped: %d\n",
-				pullResult.Downloaded, pullResult.Deleted, pullResult.Skipped)
+			fmt.Printf("  Downloaded: %d, Deleted: %d, Conflicts: %d, Skipped: %d\n",
+				pullResult.Downloaded, pullResult.Deleted, pullResult.Conflicts, pullResult.Skipped)
 			for _, e := range pullResult.Errors {
 				fmt.Fprintf(os.Stderr, "  ⚠ %s\n", e)
 			}
@@ -185,8 +189,8 @@ func cmdSync(cfg *config.Config) {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Push error: %v\n", err)
 		} else {
-			fmt.Printf("  Uploaded: %d, Skipped: %d\n",
-				pushResult.Uploaded, pushResult.Skipped)
+			fmt.Printf("  Uploaded: %d, Conflicts: %d, Skipped: %d\n",
+				pushResult.Uploaded, pushResult.Conflicts, pushResult.Skipped)
 			for _, e := range pushResult.Errors {
 				fmt.Fprintf(os.Stderr, "  ⚠ %s\n", e)
 			}
@@ -401,6 +405,80 @@ func cmdMkdir(cfg *config.Config) {
 	fmt.Printf("✅ Created: %s/ (%s)\n", dir.Name, dir.ID)
 }
 
+func cmdRm(cfg *config.Config) {
+	// Usage: izerop rm <id> [--dir]
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: izerop rm <file_id|directory_id> [--dir]\n")
+		os.Exit(1)
+	}
+
+	id := os.Args[2]
+	isDir := false
+
+	for i := 3; i < len(os.Args); i++ {
+		if os.Args[i] == "--dir" {
+			isDir = true
+		}
+	}
+
+	client := newClient(cfg)
+
+	if isDir {
+		if err := client.DeleteDirectory(id); err != nil {
+			fmt.Fprintf(os.Stderr, "Delete failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Directory deleted: %s\n", id)
+	} else {
+		if err := client.DeleteFile(id); err != nil {
+			fmt.Fprintf(os.Stderr, "Delete failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ File deleted: %s\n", id)
+	}
+}
+
+func cmdMv(cfg *config.Config) {
+	// Usage: izerop mv <file_id> [--name <new_name>] [--dir <directory_id>]
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: izerop mv <file_id> [--name <new_name>] [--dir <directory_id>]\n")
+		os.Exit(1)
+	}
+
+	fileID := os.Args[2]
+	var newName, newDirID string
+
+	for i := 3; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--name":
+			if i+1 < len(os.Args) {
+				newName = os.Args[i+1]
+				i++
+			}
+		case "--dir":
+			if i+1 < len(os.Args) {
+				newDirID = os.Args[i+1]
+				i++
+			}
+		}
+	}
+
+	if newName == "" && newDirID == "" {
+		fmt.Fprintf(os.Stderr, "Specify --name and/or --dir\n")
+		os.Exit(1)
+	}
+
+	client := newClient(cfg)
+
+	file, err := client.MoveFile(fileID, newName, newDirID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Move failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Moved: %s → %s\n", fileID[:8], file.Name)
+}
+
 func cmdWatch(cfg *config.Config) {
 	// Usage: izerop watch [<directory>] [--interval <seconds>] [--verbose]
 	syncDir := cfg.SyncDir
@@ -488,8 +566,12 @@ func runSync(client *api.Client, syncDir, serverURL string, state *sync.State, v
 		fmt.Fprintf(os.Stderr, "[%s] Pull error: %v\n", now, err)
 	} else {
 		state.Cursor = newCursor
-		if pullResult.Downloaded > 0 || pullResult.Deleted > 0 {
-			fmt.Printf("[%s] ⬇ %d downloaded, %d deleted\n", now, pullResult.Downloaded, pullResult.Deleted)
+		if pullResult.Downloaded > 0 || pullResult.Deleted > 0 || pullResult.Conflicts > 0 {
+			msg := fmt.Sprintf("[%s] ⬇ %d downloaded, %d deleted", now, pullResult.Downloaded, pullResult.Deleted)
+			if pullResult.Conflicts > 0 {
+				msg += fmt.Sprintf(", %d conflicts", pullResult.Conflicts)
+			}
+			fmt.Println(msg)
 		}
 		for _, e := range pullResult.Errors {
 			fmt.Fprintf(os.Stderr, "[%s] ⚠ %s\n", now, e)
@@ -501,8 +583,12 @@ func runSync(client *api.Client, syncDir, serverURL string, state *sync.State, v
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[%s] Push error: %v\n", now, err)
 	} else {
-		if pushResult.Uploaded > 0 {
-			fmt.Printf("[%s] ⬆ %d uploaded\n", now, pushResult.Uploaded)
+		if pushResult.Uploaded > 0 || pushResult.Conflicts > 0 {
+			msg := fmt.Sprintf("[%s] ⬆ %d uploaded", now, pushResult.Uploaded)
+			if pushResult.Conflicts > 0 {
+				msg += fmt.Sprintf(", %d conflicts", pushResult.Conflicts)
+			}
+			fmt.Println(msg)
 		}
 		for _, e := range pushResult.Errors {
 			fmt.Fprintf(os.Stderr, "[%s] ⚠ %s\n", now, e)
@@ -588,6 +674,8 @@ Commands:
   push      Upload files to server
   pull      Download files from server
   ls        List remote files and directories
+  rm        Delete a file or directory
+  mv        Move/rename a file
   update    Self-update to latest release
   version   Print version
   help      Show this help

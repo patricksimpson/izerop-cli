@@ -365,6 +365,48 @@ func (c *Client) UpdateFile(fileID string, updates map[string]string) (*FileEntr
 	return &wrapper.File, nil
 }
 
+// DeleteFile soft-deletes a file by ID.
+func (c *Client) DeleteFile(fileID string) error {
+	resp, err := c.do("DELETE", fmt.Sprintf("/api/v1/files/%s", fileID), nil)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete failed (status %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// DeleteDirectory soft-deletes a directory by ID.
+func (c *Client) DeleteDirectory(dirID string) error {
+	resp, err := c.do("DELETE", fmt.Sprintf("/api/v1/directories/%s", dirID), nil)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete failed (status %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// MoveFile moves/renames a file (updates name and/or directory).
+func (c *Client) MoveFile(fileID string, newName string, newDirID string) (*FileEntry, error) {
+	updates := make(map[string]string)
+	if newName != "" {
+		updates["name"] = newName
+	}
+	if newDirID != "" {
+		updates["directory_id"] = newDirID
+	}
+	return c.UpdateFile(fileID, updates)
+}
+
 // CreateDirectory creates a new directory on the server.
 func (c *Client) CreateDirectory(name, parentID string) (*Directory, error) {
 	payload := map[string]string{"name": name}

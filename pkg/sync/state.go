@@ -6,12 +6,22 @@ import (
 	"path/filepath"
 )
 
+// FileRecord tracks the last-known state of a synced file.
+type FileRecord struct {
+	RemoteID   string `json:"remote_id"`
+	Size       int64  `json:"size"`
+	Hash       string `json:"hash,omitempty"`
+	RemoteTime string `json:"remote_time,omitempty"`
+	LocalMod   int64  `json:"local_mod,omitempty"` // unix timestamp
+}
+
 // State tracks sync state between runs.
 type State struct {
 	Cursor string            `json:"cursor"`
 	// Notes maps local relative paths to remote file IDs for note/text files.
-	// These files are synced via the contents API, not file upload.
 	Notes  map[string]string `json:"notes,omitempty"`
+	// Files maps local relative paths to their last-synced state.
+	Files  map[string]FileRecord `json:"files,omitempty"`
 }
 
 // StateFilePath returns the path to the sync state file within a sync dir.
@@ -24,12 +34,15 @@ func LoadState(syncDir string) (*State, error) {
 	path := StateFilePath(syncDir)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return &State{}, nil // fresh state if no file
+		return &State{Files: make(map[string]FileRecord)}, nil
 	}
 
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return &State{}, nil
+		return &State{Files: make(map[string]FileRecord)}, nil
+	}
+	if state.Files == nil {
+		state.Files = make(map[string]FileRecord)
 	}
 	return &state, nil
 }

@@ -43,6 +43,7 @@ type SyncResult struct {
 	Uploaded   int
 	Deleted    int
 	Skipped    int
+	Conflicts  int
 	Errors     []string
 }
 
@@ -228,12 +229,54 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 			return nil
 		}
 
+		// Skip conflict files
+		if strings.Contains(info.Name(), ".conflict") {
+			result.Skipped++
+			return nil
+		}
+
 		// It's a regular file — check if it needs uploading
 		remoteFile, exists := remoteFilesByPath[remotePath]
 		if exists {
 			if remoteFile.Size == info.Size() {
+				// Update tracking record
+				e.State.Files[relPath] = FileRecord{
+					RemoteID:   remoteFile.ID,
+					Size:       info.Size(),
+					RemoteTime: remoteFile.UpdatedAt,
+					LocalMod:   info.ModTime().Unix(),
+				}
 				result.Skipped++
 				return nil
+			}
+
+			// File exists but size differs — check for conflict
+			if rec, tracked := e.State.Files[relPath]; tracked {
+				// Both changed if remote updated_at differs from what we last saw
+				if rec.RemoteTime != "" && rec.RemoteTime != remoteFile.UpdatedAt {
+					// Remote also changed — conflict
+					ext := filepath.Ext(path)
+					base := strings.TrimSuffix(path, ext)
+					conflictPath := fmt.Sprintf("%s.conflict%s", base, ext)
+					if ext == "" {
+						conflictPath = path + ".conflict"
+					}
+
+					// Download remote version as conflict file
+					cf, createErr := os.Create(conflictPath)
+					if createErr == nil {
+						_, dlErr := e.Client.DownloadFile(remoteFile.ID, cf)
+						cf.Close()
+						if dlErr != nil {
+							os.Remove(conflictPath)
+							result.Errors = append(result.Errors, fmt.Sprintf("conflict download %s: %v", relPath, dlErr))
+						} else if e.Verbose {
+							fmt.Printf("  ⚠ Conflict: %s (remote saved as %s)\n", relPath, filepath.Base(conflictPath))
+						}
+					}
+					result.Conflicts++
+					// Still push local version as the winner
+				}
 			}
 
 			// File exists but size differs — update it
@@ -391,6 +434,31 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 		// Ensure parent directory exists
 		os.MkdirAll(filepath.Dir(localPath), 0755)
 
+		// Conflict detection: if local file exists and has changed since last sync
+		if info, statErr := os.Stat(localPath); statErr == nil {
+			if rec, tracked := e.State.Files[localRel]; tracked {
+				// File was previously synced — check if local modified it
+				localModTime := info.ModTime().Unix()
+				if localModTime != rec.LocalMod || info.Size() != rec.Size {
+					// Local changed too — conflict!
+					ext := filepath.Ext(localPath)
+					base := strings.TrimSuffix(localPath, ext)
+					conflictPath := fmt.Sprintf("%s.conflict%s", base, ext)
+					if ext == "" {
+						conflictPath = localPath + ".conflict"
+					}
+
+					// Copy current local to conflict file
+					if copyErr := copyFile(localPath, conflictPath); copyErr != nil {
+						result.Errors = append(result.Errors, fmt.Sprintf("conflict backup %s: %v", localRel, copyErr))
+					} else if e.Verbose {
+						fmt.Printf("  ⚠ Conflict: %s (local saved as %s)\n", localRel, filepath.Base(conflictPath))
+					}
+					result.Conflicts++
+				}
+			}
+		}
+
 		f, err := os.Create(localPath)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("create %s: %v", localPath, err))
@@ -408,6 +476,16 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 		// Track notes in state
 		if isNote {
 			e.State.Notes[localRel] = change.ID
+		}
+
+		// Update file record
+		if newInfo, statErr := os.Stat(localPath); statErr == nil {
+			e.State.Files[localRel] = FileRecord{
+				RemoteID:   change.ID,
+				Size:       newInfo.Size(),
+				RemoteTime: change.UpdatedAt,
+				LocalMod:   newInfo.ModTime().Unix(),
+			}
 		}
 
 		if e.Verbose {
@@ -429,6 +507,24 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 			result.Deleted++
 		}
 	}
+}
+
+// copyFile copies src to dst.
+func copyFile(src, dst string) error {
+	s, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	d, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+
+	_, err = io.Copy(d, s)
+	return err
 }
 
 // HashFile computes SHA256 of a local file.
