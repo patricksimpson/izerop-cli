@@ -18,10 +18,11 @@ type Engine struct {
 	SyncDir string
 	Verbose bool
 	// RootDir is the name of the remote root directory (e.g. "root").
-	// Remote paths under this dir map directly to the local sync dir.
 	RootDir string
 	// State tracks notes and cursor between syncs.
-	State *State
+	State  *State
+	// Ignore holds the parsed .izeropignore rules.
+	Ignore *IgnoreRules
 }
 
 // NewEngine creates a sync engine.
@@ -34,6 +35,7 @@ func NewEngine(client *api.Client, syncDir string, state *State) *Engine {
 		SyncDir: syncDir,
 		RootDir: "root",
 		State:   state,
+		Ignore:  LoadIgnoreFile(syncDir),
 	}
 }
 
@@ -175,6 +177,18 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 
 		relPath, _ := filepath.Rel(e.SyncDir, path)
 		if relPath == "." {
+			return nil
+		}
+
+		// Check ignore rules
+		if e.Ignore.IsIgnored(relPath, info.IsDir()) {
+			if e.Verbose {
+				fmt.Printf("  ⏭ Ignored: %s\n", relPath)
+			}
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			result.Skipped++
 			return nil
 		}
 
@@ -413,6 +427,9 @@ func (e *Engine) handleDirectoryChange(change api.Change, result *SyncResult) {
 	if localRel == "" {
 		return // root dir itself, skip
 	}
+	if e.Ignore.IsIgnored(localRel, true) {
+		return
+	}
 	localPath := filepath.Join(e.SyncDir, localRel)
 
 	switch change.Action {
@@ -439,6 +456,12 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 	isNote := filepath.Ext(localRel) == ""
 	if isNote {
 		localRel = localRel + ".txt"
+	}
+
+	// Check ignore rules
+	if e.Ignore.IsIgnored(localRel, false) {
+		result.Skipped++
+		return
 	}
 
 	localPath := filepath.Join(e.SyncDir, localRel)

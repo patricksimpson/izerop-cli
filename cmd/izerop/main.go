@@ -887,6 +887,16 @@ func printCommandHelp(cmd string) {
     --push-only    Only upload local changes
     -v, --verbose  Show detailed output
 
+  Ignore patterns:
+    Create a .izeropignore file in the sync directory to skip files/dirs.
+    Works like .gitignore — supports globs, directory patterns, and negation.
+
+    Example .izeropignore:
+      build/          # skip entire directory
+      *.log           # skip by extension
+      secret.env      # skip specific file
+      !important.log  # un-ignore a file
+
   Examples:
     izerop sync                    # sync current directory
     izerop sync ~/izerop           # sync a specific directory
