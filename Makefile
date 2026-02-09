@@ -4,7 +4,8 @@ LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 PREFIX := /usr/local
 
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
-WAILS := $(shell command -v wails 2>/dev/null || echo "$(HOME)/.local/share/mise/installs/go/$(shell go env GOVERSION | sed 's/go//')/bin/wails")
+GOBIN := $(shell go env GOPATH)/bin
+WAILS := $(shell command -v wails 2>/dev/null || echo "$(GOBIN)/wails")
 
 .PHONY: build install uninstall clean test release desktop
 
