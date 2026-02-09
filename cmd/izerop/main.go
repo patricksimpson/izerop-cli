@@ -721,9 +721,8 @@ func cmdLogs() {
 	}
 
 	if follow {
-		// Use tail -f
-		cmd := fmt.Sprintf("tail -n %d -f %s", tail, logPath)
-		proc := execCommand(cmd)
+		args := []string{"-n", strconv.Itoa(tail), "-f", logPath}
+		proc := exec.Command("tail", args...)
 		proc.Stdout = os.Stdout
 		proc.Stderr = os.Stderr
 
@@ -738,16 +737,12 @@ func cmdLogs() {
 
 		proc.Run()
 	} else {
-		cmd := fmt.Sprintf("tail -n %d %s", tail, logPath)
-		proc := execCommand(cmd)
+		args := []string{"-n", strconv.Itoa(tail), logPath}
+		proc := exec.Command("tail", args...)
 		proc.Stdout = os.Stdout
 		proc.Stderr = os.Stderr
 		proc.Run()
 	}
-}
-
-func execCommand(cmd string) *exec.Cmd {
-	return exec.Command("sh", "-c", cmd)
 }
 
 func cmdUpdate() {
