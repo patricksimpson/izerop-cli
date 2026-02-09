@@ -2,6 +2,8 @@ package main
 
 import (
 	"embed"
+	"io/fs"
+	"log"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -14,12 +16,18 @@ var assets embed.FS
 func main() {
 	app := NewApp()
 
-	err := wails.Run(&options.App{
+	// Strip the frontend/dist prefix so index.html is at root
+	distFS, err := fs.Sub(assets, "frontend/dist")
+	if err != nil {
+		log.Fatal("Could not load frontend assets:", err)
+	}
+
+	err = wails.Run(&options.App{
 		Title:  "izerop",
 		Width:  900,
 		Height: 600,
 		AssetServer: &assetserver.Options{
-			Assets: assets,
+			Assets: distFS,
 		},
 		OnStartup: app.startup,
 		Bind: []interface{}{
