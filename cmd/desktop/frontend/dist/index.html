@@ -302,6 +302,39 @@
         }
 
         .watching-indicator { animation: pulse 2s ease-in-out infinite; }
+
+        /* Sync control bar - always visible */
+        .sync-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 16px;
+            background: var(--surface);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            flex-shrink: 0;
+        }
+
+        .sync-bar .sync-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+
+        .sync-bar .sync-dir-label {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 12px;
+            color: var(--text-dim);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 300px;
+        }
+
+        .sync-bar .spacer { flex: 1; }
+
+        .sync-bar .btn { padding: 5px 12px; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -326,7 +359,22 @@
     </div>
 
     <!-- Main App Layout -->
-    <div id="app-layout" class="app-layout screen">
+    <div id="app-layout" class="app-layout screen" style="flex-direction: column;">
+        <!-- Persistent sync control bar -->
+        <div class="sync-bar" id="sync-bar">
+            <div class="sync-status">
+                <span class="status-badge connected" id="bar-conn-badge">
+                    <span class="status-dot"></span>
+                    <span id="bar-conn-text">Connected</span>
+                </span>
+            </div>
+            <span class="sync-dir-label" id="bar-sync-dir">No sync directory</span>
+            <div class="spacer"></div>
+            <button class="btn btn-sm" id="bar-sync-btn" onclick="runSync()">⚡ Sync</button>
+            <button class="btn btn-sm btn-success" id="bar-watch-btn" onclick="toggleWatch()">👁 Watch</button>
+        </div>
+
+        <div style="display: flex; flex: 1; min-height: 0; overflow: hidden;">
         <div class="sidebar">
             <div class="nav-item active" data-screen="dashboard" onclick="navigate('dashboard')">
                 <span class="icon">📊</span> Dashboard
@@ -383,18 +431,13 @@
 
                 <div class="btn-row">
                     <button class="btn" onclick="refreshStatus()">↻ Refresh</button>
-                    <button class="btn btn-outline" onclick="logout()">Disconnect</button>
                 </div>
             </div>
 
             <!-- Sync -->
             <div id="page-sync" class="screen">
                 <div class="section-header">
-                    <h2>Sync</h2>
-                    <span class="status-badge" id="watch-badge" style="display:none">
-                        <span class="status-dot watching-indicator"></span>
-                        <span>Watching</span>
-                    </span>
+                    <h2>Sync Settings</h2>
                 </div>
 
                 <div class="sync-dir-box">
@@ -406,20 +449,13 @@
                     </div>
                 </div>
 
-                <div class="btn-row" style="margin-bottom: 16px;">
-                    <button class="btn" id="sync-now-btn" onclick="runSync()">⚡ Sync Now</button>
-                    <button class="btn btn-success" id="watch-btn" onclick="toggleWatch()">👁 Start Watching</button>
-                </div>
-
-                <!-- Inline activity log -->
-                <div class="log-container">
-                    <div class="log-header">
-                        <h3>Recent Activity</h3>
-                        <button class="btn btn-sm btn-outline" onclick="clearLogs()">Clear</button>
+                <div class="ignore-section">
+                    <h3>.izeropignore</h3>
+                    <p>One pattern per line. Works like .gitignore — supports globs, directory patterns, and negation.</p>
+                    <div class="form-group">
+                        <textarea id="ignore-rules-sync" placeholder="# Example&#10;build/&#10;*.log&#10;.DS_Store&#10;node_modules/"></textarea>
                     </div>
-                    <div class="log-entries" id="sync-log-entries">
-                        <div class="log-empty">No activity yet. Run a sync or start watching.</div>
-                    </div>
+                    <button class="btn btn-sm" onclick="saveIgnoreRules()">Save Ignore Rules</button>
                 </div>
             </div>
 
@@ -465,6 +501,7 @@
                 </div>
             </div>
         </div>
+        </div><!-- close flex wrapper -->
     </div>
 
     <script>
@@ -544,12 +581,19 @@
         async function refreshStatus() {
             try {
                 const s = await window.go.main.App.GetStatus();
+
+                // Dashboard badges
                 const badge = document.getElementById('conn-badge');
                 const text = document.getElementById('conn-text');
+                // Sync bar badges
+                const barBadge = document.getElementById('bar-conn-badge');
+                const barText = document.getElementById('bar-conn-text');
 
                 if (s.connected) {
                     badge.className = 'status-badge connected';
                     text.textContent = 'Connected';
+                    barBadge.className = 'status-badge connected';
+                    barText.textContent = 'Connected';
                     document.getElementById('file-count').textContent = s.fileCount;
                     document.getElementById('dir-count').textContent = s.directoryCount;
                     document.getElementById('storage-size').textContent = formatSize(s.totalSize);
@@ -557,6 +601,8 @@
                 } else {
                     badge.className = 'status-badge disconnected';
                     text.textContent = 'Disconnected';
+                    barBadge.className = 'status-badge disconnected';
+                    barText.textContent = 'Disconnected';
                 }
             } catch (e) {
                 console.error('Status refresh failed:', e);
@@ -569,26 +615,29 @@
                 const dirs = ['dash-sync-dir', 'sync-dir-display', 'settings-sync-dir'];
                 dirs.forEach(id => {
                     const el = document.getElementById(id);
-                    if (cfg.syncDir) {
-                        el.innerHTML = cfg.syncDir;
-                    } else {
-                        el.innerHTML = '<span class="no-dir">Not configured</span>';
+                    if (el) {
+                        el.innerHTML = cfg.syncDir || '<span class="no-dir">Not configured</span>';
                     }
                 });
 
-                document.getElementById('ignore-rules').value = cfg.ignoreRules || '';
+                // Update sync bar directory label
+                const barDir = document.getElementById('bar-sync-dir');
+                barDir.textContent = cfg.syncDir || 'No sync directory';
 
-                const watchBadge = document.getElementById('watch-badge');
-                const watchBtn = document.getElementById('watch-btn');
+                // Update ignore rules textareas
+                ['ignore-rules', 'ignore-rules-sync'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.value = cfg.ignoreRules || '';
+                });
+
+                // Update sync bar watch button
+                const barWatchBtn = document.getElementById('bar-watch-btn');
                 if (cfg.isWatching) {
-                    watchBadge.style.display = '';
-                    watchBadge.className = 'status-badge watching';
-                    watchBtn.textContent = '⏹ Stop Watching';
-                    watchBtn.className = 'btn btn-outline';
+                    barWatchBtn.textContent = '⏹ Stop';
+                    barWatchBtn.className = 'btn btn-sm btn-outline';
                 } else {
-                    watchBadge.style.display = 'none';
-                    watchBtn.textContent = '👁 Start Watching';
-                    watchBtn.className = 'btn btn-success';
+                    barWatchBtn.textContent = '👁 Watch';
+                    barWatchBtn.className = 'btn btn-sm btn-success';
                 }
             } catch (e) {
                 console.error('Config refresh failed:', e);
@@ -617,9 +666,9 @@
         }
 
         async function runSync() {
-            const btn = document.getElementById('sync-now-btn');
+            const btn = document.getElementById('bar-sync-btn');
             btn.disabled = true;
-            btn.innerHTML = '<span class="spinner"></span> Syncing...';
+            btn.innerHTML = '<span class="spinner"></span>';
 
             const result = await window.go.main.App.RunSync();
             if (!result.success) {
@@ -627,7 +676,7 @@
             }
 
             btn.disabled = false;
-            btn.textContent = '⚡ Sync Now';
+            btn.textContent = '⚡ Sync';
             refreshStatus();
             refreshLogs();
         }
@@ -651,7 +700,6 @@
 
         async function refreshLogs() {
             const logs = await window.go.main.App.GetSyncLogs();
-            renderLogs('sync-log-entries', logs);
             renderLogs('activity-log-entries', logs);
         }
 
