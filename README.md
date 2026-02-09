@@ -14,7 +14,17 @@ make install
 
 ### From Release
 
-Download the latest binary for your platform from [Releases](https://github.com/patricksimpson/izerop-cli/releases), then:
+Download the latest binary for your platform:
+
+| Platform | CLI | Desktop |
+|----------|-----|---------|
+| Linux x64 | [izerop-linux-amd64](https://github.com/patricksimpson/izerop-cli/releases/latest/download/izerop-linux-amd64) | [izerop-desktop-linux-amd64](https://github.com/patricksimpson/izerop-cli/releases/latest/download/izerop-desktop-linux-amd64) |
+| Linux ARM64 | [izerop-linux-arm64](https://github.com/patricksimpson/izerop-cli/releases/latest/download/izerop-linux-arm64) | — |
+| macOS Intel | [izerop-darwin-amd64](https://github.com/patricksimpson/izerop-cli/releases/latest/download/izerop-darwin-amd64) | [izerop-desktop-macos-amd64.zip](https://github.com/patricksimpson/izerop-cli/releases/latest/download/izerop-desktop-macos-amd64.zip) |
+| macOS Apple Silicon | [izerop-darwin-arm64](https://github.com/patricksimpson/izerop-cli/releases/latest/download/izerop-darwin-arm64) | [izerop-desktop-macos-arm64.zip](https://github.com/patricksimpson/izerop-cli/releases/latest/download/izerop-desktop-macos-arm64.zip) |
+| Windows x64 | [izerop-windows-amd64.exe](https://github.com/patricksimpson/izerop-cli/releases/latest/download/izerop-windows-amd64.exe) | [izerop-desktop-windows-amd64.exe](https://github.com/patricksimpson/izerop-cli/releases/latest/download/izerop-desktop-windows-amd64.exe) |
+
+Then for the CLI:
 
 ```bash
 chmod +x izerop-linux-amd64
