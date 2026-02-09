@@ -520,7 +520,7 @@ func cmdWatch(cfg *config.Config) {
 				interval = time.Duration(secs) * time.Second
 				i++
 			}
-		case "--daemon", "-d":
+		case "--daemon", "-d", "--background":
 			daemon = true
 		case "--log":
 			if i+1 < len(os.Args) {
@@ -632,7 +632,7 @@ func daemonize(logPath string) error {
 
 	args := []string{execPath}
 	for _, arg := range srcArgs[1:] {
-		if arg == "--daemon" || arg == "-d" {
+		if arg == "--daemon" || arg == "-d" || arg == "--background" {
 			continue
 		}
 		args = append(args, arg)
@@ -830,7 +830,7 @@ func cmdUpdate() {
 							// Ensure --daemon is present
 							hasDaemon := false
 							for _, a := range savedArgs {
-								if a == "--daemon" || a == "-d" {
+								if a == "--daemon" || a == "-d" || a == "--background" {
 									hasDaemon = true
 								}
 							}
