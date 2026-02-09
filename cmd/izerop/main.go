@@ -601,8 +601,13 @@ func cmdWatch(cfg *config.Config) {
 
 func daemonize(logPath string) error {
 	// Re-exec ourselves with --log and without --daemon
-	args := []string{}
-	for _, arg := range os.Args {
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("could not find executable path: %w", err)
+	}
+
+	args := []string{execPath}
+	for _, arg := range os.Args[1:] {
 		if arg == "--daemon" || arg == "-d" {
 			continue
 		}
@@ -623,7 +628,7 @@ func daemonize(logPath string) error {
 		Files: []*os.File{os.Stdin, logFile, logFile},
 	}
 
-	proc, err := os.StartProcess(args[0], args, attr)
+	proc, err := os.StartProcess(execPath, args, attr)
 	if err != nil {
 		logFile.Close()
 		return fmt.Errorf("could not start daemon: %w", err)
