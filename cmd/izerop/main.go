@@ -4,8 +4,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/patricksimpson/izerop-cli/internal/auth"
 	"github.com/patricksimpson/izerop-cli/pkg/api"
@@ -72,6 +76,8 @@ func main() {
 		cmdList(cfg)
 	case "mkdir":
 		cmdMkdir(cfg)
+	case "watch":
+		cmdWatch(cfg)
 	case "update":
 		cmdUpdate()
 	case "help":
@@ -395,6 +401,126 @@ func cmdMkdir(cfg *config.Config) {
 	fmt.Printf("✅ Created: %s/ (%s)\n", dir.Name, dir.ID)
 }
 
+func cmdWatch(cfg *config.Config) {
+	// Usage: izerop watch [<directory>] [--interval <seconds>] [--verbose]
+	syncDir := cfg.SyncDir
+	interval := 30 * time.Second
+	verbose := false
+
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--interval":
+			if i+1 < len(os.Args) {
+				secs, err := strconv.Atoi(os.Args[i+1])
+				if err != nil || secs < 1 {
+					fmt.Fprintf(os.Stderr, "Invalid interval: %s\n", os.Args[i+1])
+					os.Exit(1)
+				}
+				interval = time.Duration(secs) * time.Second
+				i++
+			}
+		case "--verbose", "-v":
+			verbose = true
+		default:
+			if !strings.HasPrefix(os.Args[i], "--") {
+				syncDir = os.Args[i]
+			}
+		}
+	}
+
+	if syncDir == "" {
+		syncDir = "."
+	}
+
+	absDir, err := filepath.Abs(syncDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid directory: %v\n", err)
+		os.Exit(1)
+	}
+	syncDir = absDir
+
+	info, err := os.Stat(syncDir)
+	if err != nil || !info.IsDir() {
+		fmt.Fprintf(os.Stderr, "Not a directory: %s\n", syncDir)
+		os.Exit(1)
+	}
+
+	client := newClient(cfg)
+	state, _ := sync.LoadState(syncDir)
+
+	fmt.Printf("👁 Watching: %s ↔ %s (every %s)\n", syncDir, cfg.ServerURL, interval)
+	fmt.Println("Press Ctrl+C to stop.")
+
+	// Handle graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Run an initial sync immediately
+	runSync(client, syncDir, cfg.ServerURL, state, verbose)
+
+	for {
+		select {
+		case <-ticker.C:
+			runSync(client, syncDir, cfg.ServerURL, state, verbose)
+		case <-sigCh:
+			fmt.Println("\n⏹ Stopping watch...")
+			if err := sync.SaveState(syncDir, state); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not save sync state: %v\n", err)
+			}
+			fmt.Println("✅ State saved. Goodbye!")
+			return
+		}
+	}
+}
+
+func runSync(client *api.Client, syncDir, serverURL string, state *sync.State, verbose bool) {
+	engine := sync.NewEngine(client, syncDir, state)
+	engine.Verbose = verbose
+
+	now := time.Now().Format("15:04:05")
+
+	// Pull
+	pullResult, newCursor, err := engine.PullSync(state.Cursor)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] Pull error: %v\n", now, err)
+	} else {
+		state.Cursor = newCursor
+		if pullResult.Downloaded > 0 || pullResult.Deleted > 0 {
+			fmt.Printf("[%s] ⬇ %d downloaded, %d deleted\n", now, pullResult.Downloaded, pullResult.Deleted)
+		}
+		for _, e := range pullResult.Errors {
+			fmt.Fprintf(os.Stderr, "[%s] ⚠ %s\n", now, e)
+		}
+	}
+
+	// Push
+	pushResult, err := engine.PushSync()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] Push error: %v\n", now, err)
+	} else {
+		if pushResult.Uploaded > 0 {
+			fmt.Printf("[%s] ⬆ %d uploaded\n", now, pushResult.Uploaded)
+		}
+		for _, e := range pushResult.Errors {
+			fmt.Fprintf(os.Stderr, "[%s] ⚠ %s\n", now, e)
+		}
+	}
+
+	// Save state after each cycle
+	if err := sync.SaveState(syncDir, state); err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] Warning: could not save state: %v\n", now, err)
+	}
+
+	// Only print quiet ticks in verbose mode
+	if verbose && (pullResult == nil || (pullResult.Downloaded == 0 && pullResult.Deleted == 0)) &&
+		(pushResult == nil || pushResult.Uploaded == 0) {
+		fmt.Printf("[%s] · no changes\n", now)
+	}
+}
+
 func cmdUpdate() {
 	v := strings.TrimPrefix(version, "v")
 	fmt.Printf("Current version: v%s\n", v)
@@ -448,6 +574,7 @@ func formatSize(bytes int64) string {
 }
 
 func printUsage() {
+	v := strings.TrimPrefix(version, "v")
 	fmt.Printf(`izerop-cli v%s — file sync client for izerop
 
 Usage:
@@ -457,6 +584,7 @@ Commands:
   login     Authenticate with izerop server
   status    Show connection and sync status
   sync      Sync local directory with server
+  watch     Watch directory and sync periodically (default: 30s)
   push      Upload files to server
   pull      Download files from server
   ls        List remote files and directories
@@ -474,5 +602,5 @@ Environment:
 
 Precedence: --server flag > env vars > config file
 
-`, version)
+`, v)
 }
