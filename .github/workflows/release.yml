@@ -77,7 +77,7 @@ jobs:
           cd cmd/desktop
           wails build -ldflags "-s -w -X main.version=${{ github.ref_name }}"
           cd build/bin
-          zip -r ../../../../dist-desktop/izerop-desktop-macos-amd64.zip izerop-desktop.app
+          zip -r ../../../../dist-desktop/izerop-desktop-macos-amd64.zip izerop.app
 
       - name: Upload macOS desktop
         uses: actions/upload-artifact@v4
@@ -103,7 +103,7 @@ jobs:
           cd cmd/desktop
           wails build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -platform darwin/arm64
           cd build/bin
-          zip -r ../../../../dist-desktop/izerop-desktop-macos-arm64.zip izerop-desktop.app
+          zip -r ../../../../dist-desktop/izerop-desktop-macos-arm64.zip izerop.app
 
       - name: Upload macOS ARM desktop
         uses: actions/upload-artifact@v4
