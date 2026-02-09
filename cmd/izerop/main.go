@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -16,6 +18,7 @@ import (
 	"github.com/patricksimpson/izerop-cli/pkg/config"
 	"github.com/patricksimpson/izerop-cli/pkg/sync"
 	"github.com/patricksimpson/izerop-cli/pkg/updater"
+	"github.com/patricksimpson/izerop-cli/pkg/watcher"
 )
 
 // version is set at build time via -ldflags
@@ -81,7 +84,16 @@ func main() {
 	case "mv":
 		cmdMv(cfg)
 	case "watch":
+		// Handle --stop before full watch
+		for _, arg := range os.Args[2:] {
+			if arg == "--stop" {
+				cmdWatchStop()
+				return
+			}
+		}
 		cmdWatch(cfg)
+	case "logs":
+		cmdLogs()
 	case "update":
 		cmdUpdate()
 	case "help":
@@ -480,10 +492,12 @@ func cmdMv(cfg *config.Config) {
 }
 
 func cmdWatch(cfg *config.Config) {
-	// Usage: izerop watch [<directory>] [--interval <seconds>] [--verbose]
+	// Usage: izerop watch [<directory>] [--interval <seconds>] [--daemon] [--log <path>] [--verbose]
 	syncDir := cfg.SyncDir
 	interval := 30 * time.Second
 	verbose := false
+	daemon := false
+	logPath := ""
 
 	for i := 2; i < len(os.Args); i++ {
 		switch os.Args[i] {
@@ -495,6 +509,13 @@ func cmdWatch(cfg *config.Config) {
 					os.Exit(1)
 				}
 				interval = time.Duration(secs) * time.Second
+				i++
+			}
+		case "--daemon", "-d":
+			daemon = true
+		case "--log":
+			if i+1 < len(os.Args) {
+				logPath = os.Args[i+1]
 				i++
 			}
 		case "--verbose", "-v":
@@ -523,88 +544,205 @@ func cmdWatch(cfg *config.Config) {
 		os.Exit(1)
 	}
 
-	client := newClient(cfg)
-	state, _ := sync.LoadState(syncDir)
-
-	fmt.Printf("👁 Watching: %s ↔ %s (every %s)\n", syncDir, cfg.ServerURL, interval)
-	fmt.Println("Press Ctrl+C to stop.")
-
-	// Handle graceful shutdown
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	// Run an initial sync immediately
-	runSync(client, syncDir, cfg.ServerURL, state, verbose)
-
-	for {
-		select {
-		case <-ticker.C:
-			runSync(client, syncDir, cfg.ServerURL, state, verbose)
-		case <-sigCh:
-			fmt.Println("\n⏹ Stopping watch...")
-			if err := sync.SaveState(syncDir, state); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not save sync state: %v\n", err)
-			}
-			fmt.Println("✅ State saved. Goodbye!")
-			return
+	// Daemon mode: fork and exit parent
+	if daemon {
+		if logPath == "" {
+			logPath = defaultLogPath()
 		}
+		if err := daemonize(logPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Daemon failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Set up logger
+	logger := log.New(os.Stdout, "", log.LstdFlags)
+	if logPath != "" {
+		logFile, err := openLogFile(logPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not open log file: %v\n", err)
+			os.Exit(1)
+		}
+		defer logFile.Close()
+		logger = log.New(logFile, "", log.LstdFlags)
+	}
+
+	// Write PID file
+	pidPath := pidFilePath()
+	os.MkdirAll(filepath.Dir(pidPath), 0755)
+	os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+	defer os.Remove(pidPath)
+
+	client := newClient(cfg)
+
+	w, err := watcher.New(watcher.Config{
+		SyncDir:      syncDir,
+		ServerURL:    cfg.ServerURL,
+		Client:       client,
+		PollInterval: interval,
+		Verbose:      verbose,
+		Logger:       logger,
+	})
+	if err != nil {
+		logger.Fatalf("Failed to start watcher: %v", err)
+	}
+
+	if logPath == "" {
+		fmt.Printf("👁 Watching: %s ↔ %s\n", syncDir, cfg.ServerURL)
+		fmt.Printf("   fsnotify: enabled, poll: every %s\n", interval)
+		fmt.Println("   Press Ctrl+C to stop.")
+	}
+
+	if err := w.Run(); err != nil {
+		logger.Fatalf("Watcher error: %v", err)
 	}
 }
 
-func runSync(client *api.Client, syncDir, serverURL string, state *sync.State, verbose bool) {
-	engine := sync.NewEngine(client, syncDir, state)
-	engine.Verbose = verbose
+func daemonize(logPath string) error {
+	// Re-exec ourselves with --log and without --daemon
+	args := []string{}
+	for _, arg := range os.Args {
+		if arg == "--daemon" || arg == "-d" {
+			continue
+		}
+		args = append(args, arg)
+	}
+	args = append(args, "--log", logPath)
 
-	now := time.Now().Format("15:04:05")
-
-	// Pull
-	pullResult, newCursor, err := engine.PullSync(state.Cursor)
+	// Open log file for the child
+	os.MkdirAll(filepath.Dir(logPath), 0755)
+	logFile, err := openLogFile(logPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[%s] Pull error: %v\n", now, err)
-	} else {
-		state.Cursor = newCursor
-		if pullResult.Downloaded > 0 || pullResult.Deleted > 0 || pullResult.Conflicts > 0 {
-			msg := fmt.Sprintf("[%s] ⬇ %d downloaded, %d deleted", now, pullResult.Downloaded, pullResult.Deleted)
-			if pullResult.Conflicts > 0 {
-				msg += fmt.Sprintf(", %d conflicts", pullResult.Conflicts)
-			}
-			fmt.Println(msg)
-		}
-		for _, e := range pullResult.Errors {
-			fmt.Fprintf(os.Stderr, "[%s] ⚠ %s\n", now, e)
-		}
+		return err
 	}
 
-	// Push
-	pushResult, err := engine.PushSync()
+	attr := &os.ProcAttr{
+		Dir:   ".",
+		Env:   os.Environ(),
+		Files: []*os.File{os.Stdin, logFile, logFile},
+	}
+
+	proc, err := os.StartProcess(args[0], args, attr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[%s] Push error: %v\n", now, err)
-	} else {
-		if pushResult.Uploaded > 0 || pushResult.Conflicts > 0 {
-			msg := fmt.Sprintf("[%s] ⬆ %d uploaded", now, pushResult.Uploaded)
-			if pushResult.Conflicts > 0 {
-				msg += fmt.Sprintf(", %d conflicts", pushResult.Conflicts)
+		logFile.Close()
+		return fmt.Errorf("could not start daemon: %w", err)
+	}
+
+	fmt.Printf("👁 Daemon started (PID %d)\n", proc.Pid)
+	fmt.Printf("   Log: %s\n", logPath)
+	fmt.Printf("   Stop: izerop watch --stop\n")
+
+	proc.Release()
+	logFile.Close()
+	return nil
+}
+
+func openLogFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+}
+
+func defaultLogPath() string {
+	dir, _ := os.UserConfigDir()
+	return filepath.Join(dir, "izerop", "watch.log")
+}
+
+func pidFilePath() string {
+	dir, _ := os.UserConfigDir()
+	return filepath.Join(dir, "izerop", "watch.pid")
+}
+
+func cmdWatchStop() {
+	pidPath := pidFilePath()
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "No running watcher found (no PID file)\n")
+		os.Exit(1)
+	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid PID file\n")
+		os.Remove(pidPath)
+		os.Exit(1)
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Process %d not found\n", pid)
+		os.Remove(pidPath)
+		os.Exit(1)
+	}
+
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not stop process %d: %v\n", pid, err)
+		os.Remove(pidPath)
+		os.Exit(1)
+	}
+
+	os.Remove(pidPath)
+	fmt.Printf("⏹ Stopped watcher (PID %d)\n", pid)
+}
+
+func cmdLogs() {
+	// Usage: izerop logs [--tail <n>] [--follow]
+	logPath := defaultLogPath()
+	tail := 50
+	follow := false
+
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--tail", "-n":
+			if i+1 < len(os.Args) {
+				n, err := strconv.Atoi(os.Args[i+1])
+				if err == nil {
+					tail = n
+				}
+				i++
 			}
-			fmt.Println(msg)
-		}
-		for _, e := range pushResult.Errors {
-			fmt.Fprintf(os.Stderr, "[%s] ⚠ %s\n", now, e)
+		case "--follow", "-f":
+			follow = true
+		case "--path":
+			if i+1 < len(os.Args) {
+				logPath = os.Args[i+1]
+				i++
+			}
 		}
 	}
 
-	// Save state after each cycle
-	if err := sync.SaveState(syncDir, state); err != nil {
-		fmt.Fprintf(os.Stderr, "[%s] Warning: could not save state: %v\n", now, err)
+	if _, err := os.Stat(logPath); err != nil {
+		fmt.Fprintf(os.Stderr, "No log file found at %s\n", logPath)
+		os.Exit(1)
 	}
 
-	// Only print quiet ticks in verbose mode
-	if verbose && (pullResult == nil || (pullResult.Downloaded == 0 && pullResult.Deleted == 0)) &&
-		(pushResult == nil || pushResult.Uploaded == 0) {
-		fmt.Printf("[%s] · no changes\n", now)
+	if follow {
+		// Use tail -f
+		cmd := fmt.Sprintf("tail -n %d -f %s", tail, logPath)
+		proc := execCommand(cmd)
+		proc.Stdout = os.Stdout
+		proc.Stderr = os.Stderr
+
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigCh
+			if proc.Process != nil {
+				proc.Process.Kill()
+			}
+		}()
+
+		proc.Run()
+	} else {
+		cmd := fmt.Sprintf("tail -n %d %s", tail, logPath)
+		proc := execCommand(cmd)
+		proc.Stdout = os.Stdout
+		proc.Stderr = os.Stderr
+		proc.Run()
 	}
+}
+
+func execCommand(cmd string) *exec.Cmd {
+	return exec.Command("sh", "-c", cmd)
 }
 
 func cmdUpdate() {
@@ -670,7 +808,8 @@ Commands:
   login     Authenticate with izerop server
   status    Show connection and sync status
   sync      Sync local directory with server
-  watch     Watch directory and sync periodically (default: 30s)
+  watch     Watch and sync (fsnotify + polling, --daemon for background)
+  logs      View watch daemon logs (--follow, --tail N)
   push      Upload files to server
   pull      Download files from server
   ls        List remote files and directories
