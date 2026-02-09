@@ -47,7 +47,7 @@ release: clean
 	@echo "✅ Release binaries in dist/"
 
 desktop:
-	cd cmd/desktop && $(WAILS) build
+	cd cmd/desktop && $(WAILS) build -ldflags "-s -w -X main.version=$(VERSION)"
 	@echo "✅ Desktop app built: cmd/desktop/build/bin/"
 
 desktop-dev:
@@ -57,8 +57,8 @@ desktop-update:
 	@echo "⬇️  Pulling latest..."
 	@git pull
 	@echo "🔨 Building desktop app..."
-	@cd cmd/desktop && $(WAILS) build
-	@echo "✅ Updated! Run: ./cmd/desktop/build/bin/desktop"
+	@cd cmd/desktop && $(WAILS) build -ldflags "-s -w -X main.version=$(VERSION)"
+	@echo "✅ Updated! Run: ./cmd/desktop/build/bin/izerop"
 
 clean:
 	rm -rf bin/ dist/ cmd/desktop/build/
