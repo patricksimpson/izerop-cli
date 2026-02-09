@@ -53,6 +53,13 @@ desktop:
 desktop-dev:
 	cd cmd/desktop && $(WAILS) dev
 
+desktop-update:
+	@echo "⬇️  Pulling latest..."
+	@git pull
+	@echo "🔨 Building desktop app..."
+	@cd cmd/desktop && $(WAILS) build
+	@echo "✅ Updated! Run: ./cmd/desktop/build/bin/desktop"
+
 clean:
 	rm -rf bin/ dist/ cmd/desktop/build/
 
