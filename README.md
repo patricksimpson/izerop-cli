@@ -376,7 +376,7 @@ A native desktop app is available for all platforms. Download the appropriate fi
 3. **Dependencies:** The desktop app requires GTK3 and WebKit2GTK:
    - **Ubuntu/Debian:** `sudo apt install libgtk-3-0 libwebkit2gtk-4.0-37`
    - **Fedora:** `sudo dnf install gtk3 webkit2gtk4.0`
-   - **Arch:** `sudo pacman -S gtk3 webkit2gtk-4.1`
+   - **Arch:** `sudo pacman -S gtk3 webkit2gtk` (provides webkit2gtk-4.0 compat)
 
 ### Building from Source
 
