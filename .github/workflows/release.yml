@@ -46,6 +46,7 @@ jobs:
 
       - name: Build Linux desktop
         run: |
+          mkdir -p dist-desktop
           cd cmd/desktop
           wails build -ldflags "-s -w -X main.version=${{ github.ref_name }}"
           mv build/bin/desktop ../../dist-desktop/izerop-desktop-linux-amd64
