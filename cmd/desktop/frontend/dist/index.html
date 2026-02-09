@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>izerop</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --surface: #16213e;
+            --surface2: #0f3460;
+            --accent: #e94560;
+            --text: #eee;
+            --text-dim: #999;
+            --success: #4ade80;
+            --error: #f87171;
+            --radius: 8px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Titlebar drag region */
+        .titlebar {
+            --wails-draggable: drag;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-dim);
+            background: var(--surface);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            flex-shrink: 0;
+        }
+
+        .content {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+
+        /* Login screen */
+        .login-card {
+            background: var(--surface);
+            border-radius: var(--radius);
+            padding: 32px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+
+        .login-card h1 {
+            font-size: 24px;
+            margin-bottom: 4px;
+        }
+
+        .login-card p {
+            color: var(--text-dim);
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-dim);
+            margin-bottom: 6px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus {
+            border-color: var(--accent);
+        }
+
+        .form-group input::placeholder {
+            color: #555;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 20px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: var(--radius);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            width: 100%;
+        }
+
+        .btn:hover { opacity: 0.9; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.15);
+            color: var(--text-dim);
+        }
+
+        .btn-outline:hover {
+            border-color: rgba(255,255,255,0.3);
+            color: var(--text);
+        }
+
+        .error-msg {
+            color: var(--error);
+            font-size: 13px;
+            margin-top: 12px;
+        }
+
+        /* Dashboard */
+        .dashboard {
+            width: 100%;
+            max-width: 600px;
+        }
+
+        .dashboard-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+        }
+
+        .dashboard-header h1 {
+            font-size: 20px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-badge.connected {
+            background: rgba(74, 222, 128, 0.15);
+            color: var(--success);
+        }
+
+        .status-badge.disconnected {
+            background: rgba(248, 113, 113, 0.15);
+            color: var(--error);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--surface);
+            border-radius: var(--radius);
+            padding: 20px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-dim);
+            margin-top: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .server-info {
+            background: var(--surface);
+            border-radius: var(--radius);
+            padding: 16px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .server-info code {
+            color: var(--text);
+            font-family: 'SF Mono', 'Fira Code', monospace;
+        }
+
+        .actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .actions .btn {
+            width: auto;
+            flex: 1;
+        }
+
+        /* Screens */
+        .screen { display: none; }
+        .screen.active { display: flex; }
+
+        /* Loading spinner */
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="titlebar">izerop</div>
+
+    <!-- Login Screen -->
+    <div id="login-screen" class="content screen">
+        <div class="login-card">
+            <h1>🔐 Connect to izerop</h1>
+            <p>Enter your server URL and API token to get started.</p>
+
+            <div class="form-group">
+                <label for="server-url">Server URL</label>
+                <input type="text" id="server-url" placeholder="https://izerop.com" value="https://izerop.com">
+            </div>
+
+            <div class="form-group">
+                <label for="api-token">API Token</label>
+                <input type="password" id="api-token" placeholder="Your JWT token">
+            </div>
+
+            <button class="btn" id="login-btn" onclick="login()">Connect</button>
+            <div class="error-msg" id="login-error"></div>
+        </div>
+    </div>
+
+    <!-- Dashboard Screen -->
+    <div id="dashboard-screen" class="content screen">
+        <div class="dashboard">
+            <div class="dashboard-header">
+                <h1>📁 izerop</h1>
+                <span class="status-badge connected" id="status-badge">
+                    <span class="status-dot"></span>
+                    Connected
+                </span>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="file-count">-</div>
+                    <div class="stat-label">Files</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="dir-count">-</div>
+                    <div class="stat-label">Directories</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="storage-size">-</div>
+                    <div class="stat-label">Storage</div>
+                </div>
+            </div>
+
+            <div class="server-info">
+                <span>Server: <code id="server-display"></code></span>
+                <span id="cursor-display"></span>
+            </div>
+
+            <div class="actions">
+                <button class="btn" onclick="refreshStatus()">↻ Refresh</button>
+                <button class="btn btn-outline" onclick="logout()">Disconnect</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Wails runtime bindings
+        function showScreen(id) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+        }
+
+        function formatSize(bytes) {
+            if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+            if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+            if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return bytes + ' B';
+        }
+
+        async function init() {
+            try {
+                const status = await window.go.main.App.GetConnectionStatus();
+                if (status.connected && status.hasToken) {
+                    showScreen('dashboard-screen');
+                    refreshStatus();
+                } else {
+                    showScreen('login-screen');
+                }
+            } catch (e) {
+                showScreen('login-screen');
+            }
+        }
+
+        async function login() {
+            const btn = document.getElementById('login-btn');
+            const errEl = document.getElementById('login-error');
+            const server = document.getElementById('server-url').value.trim();
+            const token = document.getElementById('api-token').value.trim();
+
+            if (!token) {
+                errEl.textContent = 'API token is required';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Connecting...';
+            errEl.textContent = '';
+
+            try {
+                const result = await window.go.main.App.Login(server, token);
+                if (result.success) {
+                    showScreen('dashboard-screen');
+                    refreshStatus();
+                } else {
+                    errEl.textContent = result.error;
+                }
+            } catch (e) {
+                errEl.textContent = 'Connection failed: ' + e;
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Connect';
+        }
+
+        async function refreshStatus() {
+            try {
+                const status = await window.go.main.App.GetStatus();
+                const badge = document.getElementById('status-badge');
+
+                if (status.connected) {
+                    badge.className = 'status-badge connected';
+                    badge.innerHTML = '<span class="status-dot"></span> Connected';
+                    document.getElementById('file-count').textContent = status.fileCount;
+                    document.getElementById('dir-count').textContent = status.directoryCount;
+                    document.getElementById('storage-size').textContent = formatSize(status.totalSize);
+                    document.getElementById('server-display').textContent = status.server;
+                    document.getElementById('cursor-display').textContent = status.cursor ? 'Last sync: ' + new Date(status.cursor).toLocaleString() : '';
+                } else {
+                    badge.className = 'status-badge disconnected';
+                    badge.innerHTML = '<span class="status-dot"></span> Disconnected';
+                }
+            } catch (e) {
+                console.error('Status refresh failed:', e);
+            }
+        }
+
+        async function logout() {
+            await window.go.main.App.Logout();
+            document.getElementById('api-token').value = '';
+            showScreen('login-screen');
+        }
+
+        // Handle Enter key on login form
+        document.getElementById('api-token').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') login();
+        });
+
+        // Init on load
+        init();
+    </script>
+</body>
+</html>

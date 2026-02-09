@@ -20,4 +20,4 @@ vendor/
 config.json
 
 # Release binaries
-dist/
+/dist/
