@@ -4,6 +4,10 @@
 /desktop
 *.exe
 
+# Wails build output
+cmd/desktop/build/bin/
+cmd/desktop/build/darwin/
+
 # IDE
 .idea/
 .vscode/
