@@ -1,5 +1,5 @@
 BINARY := izerop
-VERSION := 0.1.0
+VERSION := 0.5.2
 LDFLAGS := -ldflags "-s -w"
 PREFIX := /usr/local
 

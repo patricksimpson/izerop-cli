@@ -13,7 +13,7 @@ import (
 	"github.com/patricksimpson/izerop-cli/pkg/sync"
 )
 
-const version = "0.1.0"
+const version = "0.5.2"
 
 func main() {
 	// Extract --server flag before command parsing
