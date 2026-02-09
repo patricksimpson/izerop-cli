@@ -13,7 +13,7 @@ import (
 	"github.com/patricksimpson/izerop-cli/pkg/sync"
 )
 
-const version = "0.5.2"
+const version = "0.5.3"
 
 func main() {
 	// Extract --server flag before command parsing
@@ -142,13 +142,14 @@ func cmdSync(cfg *config.Config) {
 	}
 
 	client := newClient(cfg)
-	engine := sync.NewEngine(client, syncDir)
-	engine.Verbose = verbose
-
-	fmt.Printf("Syncing: %s ↔ %s\n", syncDir, cfg.ServerURL)
 
 	// Load sync state
 	state, _ := sync.LoadState(syncDir)
+
+	engine := sync.NewEngine(client, syncDir, state)
+	engine.Verbose = verbose
+
+	fmt.Printf("Syncing: %s ↔ %s\n", syncDir, cfg.ServerURL)
 
 	// Pull remote changes
 	if !pushOnly {

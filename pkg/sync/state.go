@@ -8,7 +8,10 @@ import (
 
 // State tracks sync state between runs.
 type State struct {
-	Cursor string `json:"cursor"`
+	Cursor string            `json:"cursor"`
+	// Notes maps local relative paths to remote file IDs for note/text files.
+	// These files are synced via the contents API, not file upload.
+	Notes  map[string]string `json:"notes,omitempty"`
 }
 
 // StateFilePath returns the path to the sync state file within a sync dir.
