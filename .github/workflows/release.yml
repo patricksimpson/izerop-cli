@@ -128,7 +128,8 @@ jobs:
           mkdir dist-desktop
           cd cmd/desktop
           wails build -ldflags "-s -w -X main.version=${{ github.ref_name }}"
-          Copy-Item "build\bin\izerop.exe" "..\..\dist-desktop\izerop-desktop-windows-amd64.exe"
+          Get-ChildItem -Recurse build\bin\
+          Copy-Item "build\bin\desktop.exe" "..\..\dist-desktop\izerop-desktop-windows-amd64.exe"
 
       - name: Upload Windows desktop
         uses: actions/upload-artifact@v4
