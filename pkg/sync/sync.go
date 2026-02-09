@@ -48,8 +48,7 @@ type SyncResult struct {
 }
 
 // remoteToLocal converts a remote path to a local path.
-// Strips the root directory prefix so /root/foo.txt → foo.txt
-// and /root/gallery/pic.jpg → gallery/pic.jpg
+// Strips the sync directory prefix so /sync/foo.txt → foo.txt
 func (e *Engine) remoteToLocal(remotePath string) string {
 	prefix := "/" + e.RootDir
 	if strings.HasPrefix(remotePath, prefix+"/") {
@@ -58,7 +57,7 @@ func (e *Engine) remoteToLocal(remotePath string) string {
 	if strings.HasPrefix(remotePath, prefix) && len(remotePath) == len(prefix) {
 		return ""
 	}
-	// For paths not under root (e.g. /photos/), keep as-is minus leading slash
+	// For paths not under the sync dir, strip leading slash
 	if strings.HasPrefix(remotePath, "/") {
 		return remotePath[1:]
 	}
@@ -66,9 +65,35 @@ func (e *Engine) remoteToLocal(remotePath string) string {
 }
 
 // localToRemote converts a local relative path to a remote path.
-// Prepends the root directory so foo.txt → /root/foo.txt
 func (e *Engine) localToRemote(localRel string) string {
 	return "/" + e.RootDir + "/" + filepath.ToSlash(localRel)
+}
+
+// initRootDir discovers or creates the sync root directory on the server.
+// Returns the directory ID.
+func (e *Engine) initRootDir() (string, map[string]api.Directory, error) {
+	dirs, err := e.Client.ListDirectories()
+	if err != nil {
+		return "", nil, err
+	}
+
+	remoteDirsByPath := make(map[string]api.Directory)
+	for _, d := range dirs {
+		remoteDirsByPath[d.Path] = d
+	}
+
+	rootPath := "/" + e.RootDir
+	if rootDir, exists := remoteDirsByPath[rootPath]; exists {
+		return rootDir.ID, remoteDirsByPath, nil
+	}
+
+	// Create the sync root directory
+	dir, err := e.Client.CreateDirectory(e.RootDir, "")
+	if err != nil {
+		return "", nil, fmt.Errorf("could not create sync directory %q: %w", e.RootDir, err)
+	}
+	remoteDirsByPath[rootPath] = *dir
+	return dir.ID, remoteDirsByPath, nil
 }
 
 // PullSync downloads remote changes to the local sync directory.
@@ -110,38 +135,27 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 	result := &SyncResult{}
 
 	// Get remote state — directories
-	dirs, err := e.Client.ListDirectories()
+	rootID, remoteDirsByPath, err := e.initRootDir()
 	if err != nil {
-		return nil, fmt.Errorf("could not list remote directories: %w", err)
+		return nil, fmt.Errorf("could not init sync directory: %w", err)
 	}
+	rootDir := remoteDirsByPath["/"+e.RootDir]
+	_ = rootID
 
-	// Build remote dir index by path
-	remoteDirsByPath := make(map[string]api.Directory)
-	for _, d := range dirs {
-		remoteDirsByPath[d.Path] = d
-	}
-
-	// Find or verify root directory exists
-	rootPath := "/" + e.RootDir
-	rootDir, rootExists := remoteDirsByPath[rootPath]
-	if !rootExists {
-		// Create root directory
-		dir, err := e.Client.CreateDirectory(e.RootDir, "")
-		if err != nil {
-			return nil, fmt.Errorf("could not create root directory: %w", err)
-		}
-		rootDir = *dir
-		remoteDirsByPath[rootPath] = rootDir
-	}
-
-	// Get ALL remote files indexed by path
+	// Get remote files under the sync root, indexed by path
 	remoteFilesByPath := make(map[string]api.FileEntry)
-	files, err := e.Client.ListFiles("")
-	if err != nil {
-		return nil, fmt.Errorf("could not list remote files: %w", err)
-	}
-	for _, f := range files {
-		remoteFilesByPath[f.Path] = f
+	rootPrefix := "/" + e.RootDir
+	for path, dir := range remoteDirsByPath {
+		if path == rootPrefix || strings.HasPrefix(path, rootPrefix+"/") {
+			files, err := e.Client.ListFiles(dir.ID)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("list files in %s: %v", path, err))
+				continue
+			}
+			for _, f := range files {
+				remoteFilesByPath[f.Path] = f
+			}
+		}
 	}
 
 	// Walk local directory
