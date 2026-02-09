@@ -26,6 +26,10 @@ import (
 var version = "dev"
 
 func main() {
+	// Save original args before any modification
+	originalArgs = make([]string, len(os.Args))
+	copy(originalArgs, os.Args)
+
 	// Extract --server flag before command parsing
 	args := os.Args[1:]
 	var serverOverride string
@@ -610,6 +614,9 @@ func cmdWatch(cfg *config.Config) {
 	}
 }
 
+// originalArgs stores the full os.Args before --server extraction.
+var originalArgs []string
+
 func daemonize(logPath string) error {
 	// Re-exec ourselves with --log and without --daemon
 	execPath, err := os.Executable()
@@ -617,8 +624,14 @@ func daemonize(logPath string) error {
 		return fmt.Errorf("could not find executable path: %w", err)
 	}
 
+	// Use original args (before --server was stripped) to preserve all flags
+	srcArgs := originalArgs
+	if len(srcArgs) == 0 {
+		srcArgs = os.Args
+	}
+
 	args := []string{execPath}
-	for _, arg := range os.Args[1:] {
+	for _, arg := range srcArgs[1:] {
 		if arg == "--daemon" || arg == "-d" {
 			continue
 		}
