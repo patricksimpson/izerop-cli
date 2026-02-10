@@ -418,10 +418,14 @@
                 <span class="icon">⚙️</span> Settings
             </div>
             <div style="flex:1"></div>
+            <div class="nav-item" data-screen="updates" onclick="navigate('updates')">
+                <span class="icon">🔄</span> Updates
+            </div>
             <div class="nav-item" onclick="logout()" style="color: var(--error);">
                 <span class="icon">🚪</span> Logout
             </div>
             <div id="version-label" style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 8px 0; opacity: 0.5;"></div>
+            <div id="update-badge" style="display:none; font-size: 10px; color: var(--accent); text-align: center; padding: 0 0 8px; cursor: pointer;" onclick="navigate('updates')">Update available!</div>
         </div>
 
         <div class="main-content">
@@ -469,6 +473,11 @@
                     <div class="path" id="dash-sync-dir"><span class="no-dir">Not configured</span></div>
                 </div>
 
+                <div class="sync-dir-box" id="watcher-info-box">
+                    <div class="label">Watcher</div>
+                    <div class="path" id="dash-watcher-info"><span class="no-dir">Checking...</span></div>
+                </div>
+
                 <div class="btn-row">
                     <button class="btn" onclick="refreshStatus()">↻ Refresh</button>
                 </div>
@@ -511,6 +520,31 @@
                         <div class="log-empty">No activity yet.</div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Updates -->
+            <div id="page-updates" class="screen">
+                <div class="section-header">
+                    <h2>Updates</h2>
+                </div>
+
+                <div class="sync-dir-box">
+                    <div class="label">Current Version</div>
+                    <div class="path" id="update-current-ver">-</div>
+                </div>
+
+                <div class="sync-dir-box" id="update-status-box">
+                    <div class="label">Latest Version</div>
+                    <div class="path" id="update-latest-ver">-</div>
+                </div>
+
+                <div id="update-actions" style="margin-top: 16px;">
+                    <button class="btn btn-sm" id="check-update-btn" onclick="checkForUpdate()">🔍 Check for Updates</button>
+                    <button class="btn btn-sm btn-success" id="do-update-btn" style="display:none; margin-left: 8px;" onclick="doUpdate()">⬇️ Download & Install</button>
+                    <button class="btn btn-sm btn-outline" id="restart-btn" style="display:none; margin-left: 8px;" onclick="restartApp()">🔄 Restart Now</button>
+                </div>
+
+                <div id="update-msg" style="margin-top: 12px; font-size: 13px; color: var(--text-dim);"></div>
             </div>
 
             <!-- Settings -->
@@ -563,9 +597,10 @@
             document.querySelectorAll('.main-content > .screen').forEach(s => s.classList.remove('active'));
             document.getElementById('page-' + page).classList.add('active');
 
-            if (page === 'activity') refreshLogs();
+            if (page === 'activity') { refreshLogs(); }
             if (page === 'sync') { refreshSyncConfig(); refreshLogs(); }
-            if (page === 'settings') refreshSyncConfig();
+            if (page === 'settings') { refreshSyncConfig(); }
+            if (page === 'updates') { checkForUpdate(); }
         }
 
         async function init() {
@@ -575,6 +610,13 @@
                     showScreen('app-layout');
                     refreshStatus();
                     refreshSyncConfig();
+                    refreshWatcherInfo();
+                    // Check for updates in background
+                    window.go.main.App.CheckForUpdate().then(info => {
+                        if (info.available) {
+                            document.getElementById('update-badge').style.display = 'block';
+                        }
+                    }).catch(() => {});
                 } else {
                     showScreen('login-screen');
                 }
@@ -619,6 +661,7 @@
         }
 
         async function refreshStatus() {
+            refreshWatcherInfo();
             try {
                 const s = await window.go.main.App.GetStatus();
 
@@ -785,6 +828,88 @@
             } else {
                 alert(result.error);
             }
+        }
+
+        // ---- Watcher Info ----
+        async function refreshWatcherInfo() {
+            try {
+                const info = await window.go.main.App.GetWatcherInfo();
+                const el = document.getElementById('dash-watcher-info');
+                if (info.running) {
+                    const src = info.source === 'cli' ? 'CLI daemon' : 'Desktop app';
+                    el.innerHTML = '<span style="color: var(--success);">● Running</span> — ' + src + ' (PID ' + info.pid + ')';
+                } else {
+                    el.innerHTML = '<span style="color: var(--text-dim);">○ Not running</span>';
+                }
+            } catch (e) {
+                console.error('Watcher info failed:', e);
+            }
+        }
+
+        // ---- Updates ----
+        async function checkForUpdate() {
+            const btn = document.getElementById('check-update-btn');
+            const msg = document.getElementById('update-msg');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Checking...';
+            msg.textContent = '';
+
+            try {
+                const info = await window.go.main.App.CheckForUpdate();
+                document.getElementById('update-current-ver').textContent = 'v' + info.current;
+                document.getElementById('update-latest-ver').textContent = info.latest ? 'v' + info.latest : '-';
+
+                if (info.error) {
+                    msg.style.color = 'var(--error)';
+                    msg.textContent = info.error;
+                } else if (info.available) {
+                    msg.style.color = 'var(--success)';
+                    msg.textContent = 'New version available!';
+                    document.getElementById('do-update-btn').style.display = 'inline-flex';
+                    document.getElementById('update-badge').style.display = 'block';
+                } else {
+                    msg.style.color = 'var(--success)';
+                    msg.textContent = 'You\'re up to date.';
+                    document.getElementById('do-update-btn').style.display = 'none';
+                }
+            } catch (e) {
+                msg.style.color = 'var(--error)';
+                msg.textContent = 'Check failed: ' + e;
+            }
+
+            btn.disabled = false;
+            btn.textContent = '🔍 Check for Updates';
+        }
+
+        async function doUpdate() {
+            const btn = document.getElementById('do-update-btn');
+            const msg = document.getElementById('update-msg');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Downloading...';
+
+            try {
+                const result = await window.go.main.App.DoUpdate();
+                if (result.success) {
+                    msg.style.color = 'var(--success)';
+                    msg.textContent = 'Updated! Restart to apply.';
+                    btn.style.display = 'none';
+                    document.getElementById('restart-btn').style.display = 'inline-flex';
+                } else {
+                    msg.style.color = 'var(--error)';
+                    msg.textContent = result.error;
+                    btn.disabled = false;
+                    btn.textContent = '⬇️ Download & Install';
+                }
+            } catch (e) {
+                msg.style.color = 'var(--error)';
+                msg.textContent = 'Update failed: ' + e;
+                btn.disabled = false;
+                btn.textContent = '⬇️ Download & Install';
+            }
+        }
+
+        async function restartApp() {
+            await window.go.main.App.RestartApp();
         }
 
         // Listen for real-time sync log events

@@ -1,18 +1,22 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	gosync "sync"
+	"syscall"
 	"time"
 
 	"github.com/patricksimpson/izerop-cli/pkg/api"
 	"github.com/patricksimpson/izerop-cli/pkg/config"
 	pkgsync "github.com/patricksimpson/izerop-cli/pkg/sync"
+	"github.com/patricksimpson/izerop-cli/pkg/updater"
 	"github.com/patricksimpson/izerop-cli/pkg/watcher"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -53,6 +57,13 @@ func (a *App) startup(ctx context.Context) {
 		a.client = api.NewClient(cfg.ServerURL, cfg.Token)
 	}
 
+	// Load existing logs from CLI watcher log file
+	a.loadExistingLogs()
+
+	// Check if a CLI watcher is already running
+	if running, pid := a.cliWatcherRunning(); running {
+		a.addLog("info", fmt.Sprintf("CLI watcher detected (PID %d)", pid))
+	}
 }
 
 // ---- Log capture ----
@@ -220,8 +231,10 @@ func (a *App) GetSyncConfig() SyncConfig {
 	}
 
 	a.watchMu.Lock()
-	cfg.IsWatching = a.watcher != nil
+	appWatching := a.watcher != nil
 	a.watchMu.Unlock()
+	cliRunning, _ := a.cliWatcherRunning()
+	cfg.IsWatching = appWatching || cliRunning
 
 	// Load ignore rules from file
 	if cfg.SyncDir != "" {
@@ -420,7 +433,7 @@ func (a *App) GetSyncLogs() []LogEntry {
 }
 
 func (a *App) GetVersion() string {
-	return version
+	return strings.TrimPrefix(version, "v")
 }
 
 func (a *App) ClearLogs() {
@@ -430,6 +443,200 @@ func (a *App) ClearLogs() {
 }
 
 // ---- Ignore Rules ----
+
+// ---- CLI Watcher Integration ----
+
+func cliConfigDir() string {
+	dir, _ := os.UserConfigDir()
+	return filepath.Join(dir, "izerop")
+}
+
+func cliPIDPath() string {
+	return filepath.Join(cliConfigDir(), "watch.pid")
+}
+
+func cliLogPath() string {
+	return filepath.Join(cliConfigDir(), "watch.log")
+}
+
+// cliWatcherRunning checks if the CLI watcher daemon is running.
+func (a *App) cliWatcherRunning() (bool, int) {
+	data, err := os.ReadFile(cliPIDPath())
+	if err != nil {
+		return false, 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return false, 0
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false, 0
+	}
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		return false, 0
+	}
+	return true, pid
+}
+
+// GetWatcherInfo returns whether a CLI or app watcher is running.
+type WatcherInfo struct {
+	Running    bool   `json:"running"`
+	Source     string `json:"source"` // "cli", "app", or ""
+	PID        int    `json:"pid,omitempty"`
+}
+
+func (a *App) GetWatcherInfo() WatcherInfo {
+	// Check app watcher first
+	a.watchMu.Lock()
+	appWatching := a.watcher != nil
+	a.watchMu.Unlock()
+	if appWatching {
+		return WatcherInfo{Running: true, Source: "app", PID: os.Getpid()}
+	}
+
+	// Check CLI watcher
+	if running, pid := a.cliWatcherRunning(); running {
+		return WatcherInfo{Running: true, Source: "cli", PID: pid}
+	}
+
+	return WatcherInfo{Running: false}
+}
+
+// loadExistingLogs reads the last N lines from the CLI watcher log file.
+func (a *App) loadExistingLogs() {
+	logPath := cliLogPath()
+	f, err := os.Open(logPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	// Read last 100 lines
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	// Keep last 100
+	if len(lines) > 100 {
+		lines = lines[len(lines)-100:]
+	}
+
+	a.logMu.Lock()
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		level := "info"
+		if strings.Contains(line, "error") || strings.Contains(line, "ERROR") || strings.Contains(line, "failed") {
+			level = "error"
+		} else if strings.Contains(line, "⬆") || strings.Contains(line, "⬇") || strings.Contains(line, "uploaded") || strings.Contains(line, "downloaded") {
+			level = "success"
+		} else if strings.Contains(line, "conflict") {
+			level = "warn"
+		}
+		a.logs = append(a.logs, LogEntry{
+			Time:    "",
+			Message: line,
+			Level:   level,
+		})
+	}
+	a.logMu.Unlock()
+}
+
+// RefreshLogs reloads logs from the CLI watcher log file (for manual refresh).
+func (a *App) RefreshLogs() ActionResult {
+	a.logMu.Lock()
+	a.logs = nil
+	a.logMu.Unlock()
+	a.loadExistingLogs()
+	return ActionResult{Success: true}
+}
+
+// ---- Self Update ----
+
+type UpdateInfo struct {
+	Available  bool   `json:"available"`
+	Current    string `json:"current"`
+	Latest     string `json:"latest"`
+	ReleaseURL string `json:"releaseUrl,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+func (a *App) CheckForUpdate() UpdateInfo {
+	current := strings.TrimPrefix(version, "v")
+	release, err := updater.CheckForUpdate(current)
+	if err != nil {
+		return UpdateInfo{Current: current, Error: err.Error()}
+	}
+	if release == nil {
+		return UpdateInfo{Available: false, Current: current, Latest: current}
+	}
+	return UpdateInfo{
+		Available:  true,
+		Current:    current,
+		Latest:     strings.TrimPrefix(release.TagName, "v"),
+		ReleaseURL: release.HTMLURL,
+	}
+}
+
+func (a *App) DoUpdate() ActionResult {
+	current := strings.TrimPrefix(version, "v")
+	a.addLog("info", "Checking for updates...")
+
+	release, err := updater.CheckForUpdate(current)
+	if err != nil {
+		a.addLog("error", fmt.Sprintf("Update check failed: %v", err))
+		return ActionResult{Success: false, Error: err.Error()}
+	}
+	if release == nil {
+		a.addLog("info", "Already up to date")
+		return ActionResult{Success: true}
+	}
+
+	asset := updater.FindAsset(release)
+	if asset == nil {
+		a.addLog("error", "No compatible binary found for this platform")
+		return ActionResult{Success: false, Error: "No compatible binary for this platform"}
+	}
+
+	a.addLog("info", fmt.Sprintf("Downloading %s (%s)...", release.TagName, asset.Name))
+
+	if err := updater.DownloadAndReplace(asset); err != nil {
+		a.addLog("error", fmt.Sprintf("Update failed: %v", err))
+		return ActionResult{Success: false, Error: err.Error()}
+	}
+
+	a.addLog("success", fmt.Sprintf("Updated to %s! Restart the app to use the new version.", release.TagName))
+	return ActionResult{Success: true}
+}
+
+func (a *App) RestartApp() {
+	execPath, err := os.Executable()
+	if err != nil {
+		a.addLog("error", fmt.Sprintf("Could not determine executable: %v", err))
+		return
+	}
+
+	a.StopWatch()
+	a.addLog("info", "Restarting...")
+
+	// Launch new instance
+	proc, err := os.StartProcess(execPath, os.Args, &os.ProcAttr{
+		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+	})
+	if err != nil {
+		a.addLog("error", fmt.Sprintf("Restart failed: %v", err))
+		return
+	}
+	proc.Release()
+
+	// Exit current instance
+	os.Exit(0)
+}
 
 func (a *App) SaveIgnoreRules(rules string) ActionResult {
 	if a.cfg == nil || a.cfg.SyncDir == "" {
