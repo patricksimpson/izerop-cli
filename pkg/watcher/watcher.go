@@ -171,9 +171,9 @@ func (w *Watcher) runSync(reason string) {
 	if err != nil {
 		w.cfg.Logger.Printf("Push error: %v", err)
 	} else {
-		if pushResult.Uploaded > 0 || pushResult.Conflicts > 0 {
-			w.cfg.Logger.Printf("⬆ %d uploaded, %d conflicts",
-				pushResult.Uploaded, pushResult.Conflicts)
+		if pushResult.Uploaded > 0 || pushResult.Deleted > 0 || pushResult.Conflicts > 0 {
+			w.cfg.Logger.Printf("⬆ %d uploaded, %d deleted, %d conflicts",
+				pushResult.Uploaded, pushResult.Deleted, pushResult.Conflicts)
 		}
 		for _, e := range pushResult.Errors {
 			w.cfg.Logger.Printf("⚠ push: %s", e)
@@ -212,9 +212,9 @@ func (w *Watcher) runPush() {
 		w.cfg.Logger.Printf("Push error: %v", err)
 		return
 	}
-	if pushResult.Uploaded > 0 || pushResult.Conflicts > 0 {
-		w.cfg.Logger.Printf("⬆ %d uploaded, %d conflicts",
-			pushResult.Uploaded, pushResult.Conflicts)
+	if pushResult.Uploaded > 0 || pushResult.Deleted > 0 || pushResult.Conflicts > 0 {
+		w.cfg.Logger.Printf("⬆ %d uploaded, %d deleted, %d conflicts",
+			pushResult.Uploaded, pushResult.Deleted, pushResult.Conflicts)
 	}
 	for _, e := range pushResult.Errors {
 		w.cfg.Logger.Printf("⚠ push: %s", e)

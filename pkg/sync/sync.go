@@ -377,6 +377,46 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 		return result, fmt.Errorf("walk failed: %w", err)
 	}
 
+	// Detect local deletions: tracked files that no longer exist on disk
+	// If a file is in State.Files but missing locally, the user deleted it — propagate to server
+	for relPath, rec := range e.State.Files {
+		localPath := filepath.Join(e.SyncDir, relPath)
+		if _, statErr := os.Stat(localPath); os.IsNotExist(statErr) {
+			if rec.RemoteID == "" {
+				// No remote ID tracked, just clean up state
+				delete(e.State.Files, relPath)
+				continue
+			}
+			if e.Verbose {
+				fmt.Printf("  🗑 Deleting (local removed): %s\n", relPath)
+			}
+			if delErr := e.Client.DeleteFile(rec.RemoteID); delErr != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("delete %s: %v", relPath, delErr))
+			} else {
+				result.Deleted++
+			}
+			delete(e.State.Files, relPath)
+		}
+	}
+
+	// Same for tracked notes
+	for relPath, noteID := range e.State.Notes {
+		localPath := filepath.Join(e.SyncDir, relPath)
+		if _, statErr := os.Stat(localPath); os.IsNotExist(statErr) {
+			if e.Verbose {
+				fmt.Printf("  🗑 Deleting note (local removed): %s\n", relPath)
+			}
+			if delErr := e.Client.DeleteFile(noteID); delErr != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("delete note %s: %v", relPath, delErr))
+			} else {
+				result.Deleted++
+			}
+			delete(e.State.Notes, relPath)
+			// Also clean from Files if tracked there
+			delete(e.State.Files, relPath)
+		}
+	}
+
 	return result, nil
 }
 
