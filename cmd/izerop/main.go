@@ -910,7 +910,7 @@ func cmdClient(cfg *config.Config) {
 		cfg.ClientName = name
 		config.SaveProfile(activeProfile, cfg)
 
-		info, err := client.UpdateClientName(clientKey, name)
+		info, err := client.RegisterClient(clientKey, name, config.Platform(), version)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error updating server: %v\n", err)
 			os.Exit(1)
