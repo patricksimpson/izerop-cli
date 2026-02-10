@@ -1214,19 +1214,55 @@ func printCommandHelp(cmd string) {
   Watch a directory and sync continuously. Uses fsnotify for instant local
   change detection and periodic server polling for remote changes.
 
+  Each profile runs its own independent watcher with separate PID and log files.
+  You can run multiple profile watchers simultaneously.
+
   Options:
     --interval N   Server poll interval in seconds (default: 30)
     -d, --daemon   Run in background (writes PID file)
-    --log <path>   Log file path (default: ~/.config/izerop/watch.log)
+    --log <path>   Log file path (default: ~/.config/izerop/profiles/<name>/watch.log)
     -v, --verbose  Log every poll tick, not just changes
-    --stop         Stop a running daemon
+    --stop         Stop the running daemon for this profile
+    --stop --all   Stop all running profile watchers
 
   Examples:
     izerop watch                          # watch current dir (foreground)
     izerop watch ~/izerop                 # watch specific dir
     izerop watch --interval 10            # poll every 10s
     izerop watch ~/izerop --daemon        # run in background
-    izerop watch --stop                   # stop background watcher`,
+    izerop watch --stop                   # stop background watcher
+
+  Multi-profile:
+    izerop --profile default watch --daemon    # start default watcher
+    izerop --profile ranger watch --daemon     # start ranger watcher
+    izerop --profile ranger watch --stop       # stop ranger only
+    izerop watch --stop --all                  # stop all watchers`,
+
+		"profile": `izerop profile <subcommand>
+
+  Manage multiple profiles. Each profile has its own server, token, sync
+  directory, and watcher. Set a default profile so you don't need --profile
+  on every command.
+
+  Subcommands:
+    list              List all profiles (active profile marked with ★)
+    add <name>        Create a new profile
+    remove <name>     Delete a profile
+    use <name>        Set the active (default) profile
+
+  The active profile is used when no --profile flag is given.
+
+  Config: ~/.config/izerop/profiles/<name>/config.json
+  State:  ~/.config/izerop/profiles/<name>/sync-state.json
+
+  Examples:
+    izerop profile list                    # show all profiles
+    izerop profile add ranger              # create "ranger" profile
+    izerop --profile ranger login          # authenticate ranger
+    izerop profile use ranger              # make ranger the default
+    izerop sync                            # syncs using ranger (active)
+    izerop --profile default sync          # explicitly use default
+    izerop profile remove ranger           # delete ranger profile`,
 
 		"logs": `izerop logs [options]
 

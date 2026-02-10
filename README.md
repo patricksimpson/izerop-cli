@@ -63,7 +63,7 @@ Authenticate with an izerop server. Prompts for server URL and API token.
 izerop login
 ```
 
-Config is saved to `~/.config/izerop/config.json`.
+Config is saved to `~/.config/izerop/profiles/<name>/config.json`.
 
 ### `status`
 
@@ -135,11 +135,14 @@ izerop watch ~/izerop --daemon
 # Stop the daemon
 izerop watch --stop
 
+# Stop all profile watchers
+izerop watch --stop --all
+
 # Custom log file location
 izerop watch ~/izerop --daemon --log /path/to/watch.log
 ```
 
-Default log location: `~/.config/izerop/watch.log`
+Default log location: `~/.config/izerop/profiles/<name>/watch.log`
 
 ### `logs`
 
@@ -233,11 +236,72 @@ izerop update
 izerop version
 ```
 
+## Profiles
+
+Profiles let you manage multiple izerop accounts or servers. Each profile has its own server URL, API token, sync directory, state file, and watcher process.
+
+### Managing Profiles
+
+```bash
+# List all profiles (active marked with ★)
+izerop profile list
+
+# Create a new profile
+izerop profile add ranger
+
+# Authenticate a profile
+izerop --profile ranger login
+
+# Set the active (default) profile
+izerop profile use ranger
+
+# Delete a profile
+izerop profile remove ranger
+```
+
+### Using Profiles
+
+The **active profile** is used when no `--profile` flag is given:
+
+```bash
+# Set ranger as default
+izerop profile use ranger
+
+# These all use ranger now
+izerop sync
+izerop ls
+izerop watch --daemon
+
+# Explicitly use a different profile
+izerop --profile default sync
+```
+
+### Running Multiple Watchers
+
+Each profile runs its own independent watcher. You can run them simultaneously:
+
+```bash
+# Start watchers for two profiles
+izerop --profile default watch --daemon
+izerop --profile ranger watch --daemon
+
+# Check status — shows both watchers
+izerop status
+
+# Stop one
+izerop --profile ranger watch --stop
+
+# Stop all
+izerop watch --stop --all
+```
+
+Each watcher has its own PID file, log file, and sync state stored under `~/.config/izerop/profiles/<name>/`.
+
 ## Configuration
 
 ### Config File
 
-Stored at `~/.config/izerop/config.json`:
+Each profile's config is stored at `~/.config/izerop/profiles/<name>/config.json`:
 
 ```json
 {
@@ -288,13 +352,15 @@ Review `.conflict` files manually and delete them when resolved.
 
 ### State File
 
-Sync state is stored in `.izerop-sync.json` inside the sync directory. This tracks:
+Sync state is stored at `~/.config/izerop/profiles/<name>/sync-state.json`. This tracks:
 
 - Server cursor (for incremental pull)
 - File records (size, mod time, remote timestamp for conflict detection)
 - Note mappings (text files synced via contents API)
 
 Don't delete this file unless you want a full re-sync.
+
+> **Note:** Older versions stored state as `.izerop-sync.json` inside the sync directory. The CLI automatically migrates this to the config directory on first run.
 
 ### What Gets Synced
 
