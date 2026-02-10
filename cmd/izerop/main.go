@@ -117,6 +117,8 @@ func main() {
 		cmdUpdate()
 	case "profile":
 		cmdProfile()
+	case "client":
+		cmdClient(cfg)
 	case "help":
 		if len(os.Args) > 2 {
 			printCommandHelp(os.Args[2])
@@ -131,7 +133,9 @@ func main() {
 }
 
 func newClient(cfg *config.Config) *api.Client {
-	return api.NewClient(cfg.ServerURL, cfg.Token)
+	client := api.NewClient(cfg.ServerURL, cfg.Token)
+	client.ClientKey = cfg.EnsureClientKey(activeProfile)
+	return client
 }
 
 func cmdStatus(cfg *config.Config) {
@@ -271,6 +275,9 @@ func cmdSync(cfg *config.Config) {
 
 	engine := sync.NewEngine(client, syncDir, state)
 	engine.Verbose = verbose
+
+	// Register/update client with server
+	client.RegisterClient(cfg.EnsureClientKey(activeProfile), cfg.ClientName, config.Platform(), version)
 
 	fmt.Printf("Syncing: %s ↔ %s\n", syncDir, cfg.ServerURL)
 
@@ -869,6 +876,60 @@ func stopAllWatchers() {
 	}
 }
 
+func cmdClient(cfg *config.Config) {
+	if cfg == nil {
+		fmt.Fprintf(os.Stderr, "Not logged in. Run 'izerop login' first.\n")
+		os.Exit(1)
+	}
+
+	client := newClient(cfg)
+	clientKey := cfg.EnsureClientKey(activeProfile)
+
+	if len(os.Args) < 3 {
+		// Show current client info
+		info, err := client.RegisterClient(clientKey, cfg.ClientName, config.Platform(), version)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Client Key:  %s\n", info.ClientKey)
+		fmt.Printf("Name:        %s\n", info.Name)
+		fmt.Printf("Platform:    %s\n", info.Platform)
+		fmt.Printf("Version:     %s\n", info.Version)
+		fmt.Printf("Last Seen:   %s\n", info.LastSeenAt)
+		return
+	}
+
+	switch os.Args[2] {
+	case "name":
+		if len(os.Args) < 4 {
+			fmt.Fprintf(os.Stderr, "Usage: izerop client name <name>\n")
+			os.Exit(1)
+		}
+		name := strings.Join(os.Args[3:], " ")
+		cfg.ClientName = name
+		config.SaveProfile(activeProfile, cfg)
+
+		info, err := client.UpdateClientName(clientKey, name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error updating server: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Client named %q\n", info.Name)
+	case "register":
+		info, err := client.RegisterClient(clientKey, cfg.ClientName, config.Platform(), version)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Client registered: %s (%s)\n", info.Name, info.ClientKey)
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown client command: %s\n", os.Args[2])
+		fmt.Fprintf(os.Stderr, "Usage: izerop client [name <name>|register]\n")
+		os.Exit(1)
+	}
+}
+
 func cmdProfile() {
 	if len(os.Args) < 3 {
 		// Default: list profiles
@@ -1238,6 +1299,22 @@ func printCommandHelp(cmd string) {
     izerop --profile ranger watch --stop       # stop ranger only
     izerop watch --stop --all                  # stop all watchers`,
 
+		"client": `izerop client [subcommand]
+
+  View or name this sync client. Each device gets a unique key on first use.
+  The client name is shown in the file explorer so you know which device
+  uploaded each file.
+
+  Subcommands:
+    (none)          Show current client info
+    name <name>     Set a friendly name for this device
+    register        Register/update this client with the server
+
+  Examples:
+    izerop client                          # show client info
+    izerop client name "Patrick's Laptop"  # name this device
+    izerop client name "Work Desktop"      # rename it`,
+
 		"profile": `izerop profile <subcommand>
 
   Manage multiple profiles. Each profile has its own server, token, sync
@@ -1384,6 +1461,7 @@ Commands:
   ls        List remote files and directories
   rm        Delete a file or directory
   mv        Move/rename a file
+  client    Name this device for sync tracking
   profile   Manage profiles (list, add, remove, use)
   update    Self-update to latest release
   version   Print version

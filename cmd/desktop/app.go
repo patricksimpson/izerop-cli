@@ -57,6 +57,7 @@ func (a *App) startup(ctx context.Context) {
 	if err == nil && cfg.Token != "" {
 		a.cfg = cfg
 		a.client = api.NewClient(cfg.ServerURL, cfg.Token)
+		a.client.ClientKey = cfg.EnsureClientKey(a.profile)
 	}
 
 	// Load existing logs from CLI watcher log file
@@ -170,6 +171,7 @@ func (a *App) Login(serverURL, token string) LoginResult {
 	}
 
 	client := api.NewClient(serverURL, token)
+	client.ClientKey = a.cfg.EnsureClientKey(a.profile)
 	_, err := client.GetSyncStatus()
 	if err != nil {
 		return LoginResult{Success: false, Error: fmt.Sprintf("Connection failed: %v", err)}
@@ -699,6 +701,7 @@ func (a *App) SwitchProfile(name string) ActionResult {
 	a.cfg = pcfg
 	if pcfg.Token != "" {
 		a.client = api.NewClient(pcfg.ServerURL, pcfg.Token)
+		a.client.ClientKey = pcfg.EnsureClientKey(name)
 	} else {
 		a.client = nil
 	}

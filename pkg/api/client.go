@@ -17,6 +17,7 @@ import (
 type Client struct {
 	BaseURL    string
 	Token      string
+	ClientKey  string
 	HTTPClient *http.Client
 }
 
@@ -42,6 +43,9 @@ func (c *Client) do(method, path string, body io.Reader) (*http.Response, error)
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if c.ClientKey != "" {
+		req.Header.Set("X-Client-Key", c.ClientKey)
+	}
 
 	return c.HTTPClient.Do(req)
 }
@@ -237,6 +241,9 @@ func (c *Client) UploadFile(localPath, directoryID, name string) (*FileEntry, er
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Accept", "application/json")
+	if c.ClientKey != "" {
+		req.Header.Set("X-Client-Key", c.ClientKey)
+	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -435,4 +442,62 @@ func (c *Client) CreateDirectory(name, parentID string) (*Directory, error) {
 	}
 
 	return &wrapper.Directory, nil
+}
+
+// SyncClientInfo represents a registered sync client.
+type SyncClientInfo struct {
+	ID        string `json:"id"`
+	ClientKey string `json:"client_key"`
+	Name      string `json:"name"`
+	Platform  string `json:"platform"`
+	Version   string `json:"version"`
+	LastSeenAt string `json:"last_seen_at"`
+}
+
+// RegisterClient registers or updates a sync client with the server.
+func (c *Client) RegisterClient(clientKey, name, platform, version string) (*SyncClientInfo, error) {
+	data, _ := json.Marshal(map[string]string{
+		"client_key": clientKey,
+		"name":       name,
+		"platform":   platform,
+		"version":    version,
+	})
+	resp, err := c.do("POST", "/api/v1/sync/client", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var info SyncClientInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+// UpdateClientName updates the name of the current sync client.
+func (c *Client) UpdateClientName(clientKey, name string) (*SyncClientInfo, error) {
+	data, _ := json.Marshal(map[string]string{
+		"client_key": clientKey,
+		"name":       name,
+	})
+	resp, err := c.do("PATCH", "/api/v1/sync/client", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var info SyncClientInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, err
+	}
+	return &info, nil
 }

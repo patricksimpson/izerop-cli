@@ -1,10 +1,12 @@
 package config
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 )
 
@@ -14,6 +16,25 @@ type Config struct {
 	Token        string `json:"token"`
 	SyncDir      string `json:"sync_dir,omitempty"`
 	SettleTimeMs int    `json:"settle_time_ms,omitempty"` // debounce delay before syncing new/changed files (default 12000)
+	ClientKey    string `json:"client_key,omitempty"`     // unique identifier for this client device
+	ClientName   string `json:"client_name,omitempty"`    // human-readable name for this client
+}
+
+// EnsureClientKey generates a client key if one doesn't exist, saves config, and returns it.
+func (c *Config) EnsureClientKey(profile string) string {
+	if c.ClientKey != "" {
+		return c.ClientKey
+	}
+	b := make([]byte, 16)
+	rand.Read(b)
+	c.ClientKey = fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+	SaveProfile(profile, c)
+	return c.ClientKey
+}
+
+// Platform returns the OS/arch string for client registration.
+func Platform() string {
+	return fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
 // DefaultSettleTimeMs is the default debounce delay in milliseconds.
