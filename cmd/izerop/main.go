@@ -122,10 +122,29 @@ func cmdStatus(cfg *config.Config) {
 	client := newClient(cfg)
 
 	fmt.Printf("Server:  %s\n", cfg.ServerURL)
+	if cfg.SyncDir != "" {
+		fmt.Printf("Sync:    %s\n", cfg.SyncDir)
+	}
 
+	// Watcher status
+	fmt.Printf("\n")
+	watcherRunning, watcherPID := getWatcherStatus()
+	if watcherRunning {
+		fmt.Printf("Watcher: ✅ running (PID %d)\n", watcherPID)
+		// Show uptime if /proc is available (Linux)
+		if statInfo, err := os.Stat(fmt.Sprintf("/proc/%d", watcherPID)); err == nil {
+			uptime := time.Since(statInfo.ModTime()).Truncate(time.Second)
+			fmt.Printf("Uptime:  %s\n", uptime)
+		}
+	} else {
+		fmt.Printf("Watcher: ⏹ not running\n")
+	}
+
+	// Remote stats
+	fmt.Printf("\n")
 	status, err := client.GetSyncStatus()
 	if err != nil {
-		fmt.Printf("Status:  error (%v)\n", err)
+		fmt.Printf("Remote:  error (%v)\n", err)
 		return
 	}
 	fmt.Printf("Files:   %d\n", status.FileCount)
@@ -134,6 +153,44 @@ func cmdStatus(cfg *config.Config) {
 	if status.LastSync != "" {
 		fmt.Printf("Cursor:  %s\n", status.Cursor)
 	}
+
+	// Local state info
+	if cfg.SyncDir != "" {
+		state, _ := sync.LoadState(cfg.SyncDir)
+		trackedFiles := len(state.Files)
+		trackedNotes := len(state.Notes)
+		fmt.Printf("\nTracked: %d files, %d notes\n", trackedFiles, trackedNotes)
+	}
+}
+
+// getWatcherStatus checks if the background watcher is running.
+// Returns (running, pid).
+func getWatcherStatus() (bool, int) {
+	pidPath := pidFilePath()
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		return false, 0
+	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return false, 0
+	}
+
+	// Check if process is actually running
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false, 0
+	}
+
+	// Signal 0 checks if process exists without killing it
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		// Process not running, clean up stale PID file
+		os.Remove(pidPath)
+		return false, 0
+	}
+
+	return true, pid
 }
 
 func cmdSync(cfg *config.Config) {
