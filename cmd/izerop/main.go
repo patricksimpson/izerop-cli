@@ -26,7 +26,8 @@ import (
 var version = "dev"
 
 // activeProfile is the profile used for this invocation.
-var activeProfile = config.DefaultProfile
+// Defaults to the user's configured active profile (set via `izerop profile use <name>`).
+var activeProfile string
 
 func main() {
 	// Save original args before any modification
@@ -53,6 +54,11 @@ func main() {
 		}
 	}
 	os.Args = append([]string{os.Args[0]}, filtered...)
+
+	// If no --profile flag was given, use the configured default profile
+	if activeProfile == "" {
+		activeProfile = config.GetActiveProfile()
+	}
 
 	if len(os.Args) < 2 {
 		printUsage()
@@ -182,7 +188,7 @@ func cmdStatus(cfg *config.Config) {
 
 		// Local state
 		if pcfg.SyncDir != "" {
-			state, _ := sync.LoadState(pcfg.SyncDir)
+			state, _ := sync.LoadState(name)
 			fmt.Printf("Tracked: %d files, %d notes\n", len(state.Files), len(state.Notes))
 		}
 	}
@@ -257,8 +263,11 @@ func cmdSync(cfg *config.Config) {
 
 	client := newClient(cfg)
 
+	// Migrate legacy state file if needed
+	sync.MigrateState(activeProfile, syncDir)
+
 	// Load sync state
-	state, _ := sync.LoadState(syncDir)
+	state, _ := sync.LoadState(activeProfile)
 
 	engine := sync.NewEngine(client, syncDir, state)
 	engine.Verbose = verbose
@@ -297,7 +306,7 @@ func cmdSync(cfg *config.Config) {
 	}
 
 	// Save state
-	if err := sync.SaveState(syncDir, state); err != nil {
+	if err := sync.SaveState(activeProfile, state); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not save sync state: %v\n", err)
 	}
 
@@ -672,6 +681,7 @@ func cmdWatch(cfg *config.Config) {
 	settleTime := time.Duration(cfg.SettleTimeMs) * time.Millisecond
 
 	w, err := watcher.New(watcher.Config{
+		Profile:      activeProfile,
 		SyncDir:      syncDir,
 		ServerURL:    cfg.ServerURL,
 		Client:       client,

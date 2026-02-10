@@ -58,6 +58,15 @@ func ProfilePIDPath(name string) (string, error) {
 	return filepath.Join(dir, "watch.pid"), nil
 }
 
+// ProfileStatePath returns the sync state file path for a profile.
+func ProfileStatePath(name string) (string, error) {
+	dir, err := ProfileDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "sync-state.json"), nil
+}
+
 // ProfileLogPath returns the log file path for a profile's watcher.
 func ProfileLogPath(name string) (string, error) {
 	dir, err := ProfileDir(name)

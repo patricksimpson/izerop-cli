@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/patricksimpson/izerop-cli/pkg/config"
 )
 
 // FileRecord tracks the last-known state of a synced file.
@@ -24,14 +26,49 @@ type State struct {
 	Files  map[string]FileRecord `json:"files,omitempty"`
 }
 
-// StateFilePath returns the path to the sync state file within a sync dir.
-func StateFilePath(syncDir string) string {
-	return filepath.Join(syncDir, ".izerop-sync.json")
+// StatePath returns the path to the sync state file for a profile.
+// State is stored in the profile config dir (~/.config/izerop/profiles/<name>/sync-state.json).
+func StatePath(profile string) (string, error) {
+	return config.ProfileStatePath(profile)
 }
 
-// LoadState reads the sync state from disk.
-func LoadState(syncDir string) (*State, error) {
-	path := StateFilePath(syncDir)
+// MigrateState moves the legacy .izerop-sync.json from the sync dir to the profile config dir.
+func MigrateState(profile string, syncDir string) {
+	if syncDir == "" {
+		return
+	}
+	legacyPath := filepath.Join(syncDir, ".izerop-sync.json")
+	newPath, err := StatePath(profile)
+	if err != nil {
+		return
+	}
+	// Only migrate if legacy exists and new doesn't
+	if _, err := os.Stat(legacyPath); err != nil {
+		return // no legacy file
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		// New file already exists — just remove legacy
+		os.Remove(legacyPath)
+		return
+	}
+	// Move legacy to new location
+	data, err := os.ReadFile(legacyPath)
+	if err != nil {
+		return
+	}
+	os.MkdirAll(filepath.Dir(newPath), 0700)
+	if err := os.WriteFile(newPath, data, 0600); err != nil {
+		return
+	}
+	os.Remove(legacyPath)
+}
+
+// LoadState reads the sync state from the profile config dir.
+func LoadState(profile string) (*State, error) {
+	path, err := StatePath(profile)
+	if err != nil {
+		return &State{Files: make(map[string]FileRecord)}, nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return &State{Files: make(map[string]FileRecord)}, nil
@@ -47,9 +84,12 @@ func LoadState(syncDir string) (*State, error) {
 	return &state, nil
 }
 
-// SaveState writes the sync state to disk.
-func SaveState(syncDir string, state *State) error {
-	path := StateFilePath(syncDir)
+// SaveState writes the sync state to the profile config dir.
+func SaveState(profile string, state *State) error {
+	path, err := StatePath(profile)
+	if err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err

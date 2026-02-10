@@ -306,7 +306,8 @@ func (a *App) RunSync() ActionResult {
 
 	a.addLog("info", "Starting sync...")
 
-	state, _ := pkgsync.LoadState(a.cfg.SyncDir)
+	pkgsync.MigrateState(a.profile, a.cfg.SyncDir)
+	state, _ := pkgsync.LoadState(a.profile)
 	engine := pkgsync.NewEngine(a.client, a.cfg.SyncDir, state)
 
 	// Pull
@@ -334,7 +335,7 @@ func (a *App) RunSync() ActionResult {
 	}
 
 	// Save state
-	pkgsync.SaveState(a.cfg.SyncDir, state)
+	pkgsync.SaveState(a.profile, state)
 
 	total := pullResult.Downloaded + pullResult.Uploaded + pushResult.Uploaded + pullResult.Deleted
 	if total == 0 {

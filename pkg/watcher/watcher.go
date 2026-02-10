@@ -17,6 +17,7 @@ import (
 
 // Config holds watcher configuration.
 type Config struct {
+	Profile      string // profile name for state storage
 	SyncDir      string
 	ServerURL    string
 	Client       *api.Client
@@ -42,7 +43,8 @@ func New(cfg Config) (*Watcher, error) {
 		return nil, fmt.Errorf("fsnotify init failed: %w", err)
 	}
 
-	state, _ := sync.LoadState(cfg.SyncDir)
+	sync.MigrateState(cfg.Profile, cfg.SyncDir)
+	state, _ := sync.LoadState(cfg.Profile)
 
 	return &Watcher{
 		cfg:    cfg,
@@ -223,7 +225,7 @@ func (w *Watcher) runPush() {
 }
 
 func (w *Watcher) saveState() {
-	if err := sync.SaveState(w.cfg.SyncDir, w.state); err != nil {
+	if err := sync.SaveState(w.cfg.Profile, w.state); err != nil {
 		w.cfg.Logger.Printf("Warning: could not save state: %v", err)
 	}
 }
