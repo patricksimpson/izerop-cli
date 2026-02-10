@@ -640,6 +640,13 @@ func cmdWatch(cfg *config.Config) {
 		os.Exit(1)
 	}
 
+	// Check if a watcher is already running for this profile
+	if running, pid := getWatcherStatusForProfile(activeProfile); running {
+		fmt.Fprintf(os.Stderr, "⚠ Watcher already running for profile %q (PID %d)\n", activeProfile, pid)
+		fmt.Fprintf(os.Stderr, "   Stop it first: izerop --profile %s watch --stop\n", activeProfile)
+		os.Exit(1)
+	}
+
 	// Daemon mode: fork and exit parent
 	if daemon {
 		if logPath == "" {
@@ -722,11 +729,20 @@ func daemonize(logPath string) error {
 	}
 
 	args := []string{execPath}
+	hasProfile := false
 	for _, arg := range srcArgs[1:] {
 		if arg == "--daemon" || arg == "-d" || arg == "--background" {
 			continue
 		}
+		if arg == "--profile" {
+			hasProfile = true
+		}
 		args = append(args, arg)
+	}
+	// Always inject --profile so the daemon uses the correct profile
+	// even if the active profile changes later
+	if !hasProfile {
+		args = append(args, "--profile", activeProfile)
 	}
 	args = append(args, "--log", logPath)
 
