@@ -27,15 +27,18 @@ func Login() error {
 		return fmt.Errorf("token is required")
 	}
 
-	cfg := &config.Config{
-		ServerURL: serverURL,
-		Token:     token,
+	// Load existing config to preserve settings like SyncDir
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = &config.Config{}
 	}
+	cfg.ServerURL = serverURL
+	cfg.Token = token
 
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("could not save config: %w", err)
 	}
 
-	fmt.Println("Login successful! Config saved.")
+	fmt.Printf("Login successful! Config saved to profile %q.\n", config.GetActiveProfile())
 	return nil
 }

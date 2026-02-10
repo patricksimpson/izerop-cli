@@ -25,21 +25,29 @@ import (
 // version is set at build time via -ldflags
 var version = "dev"
 
+// activeProfile is the profile used for this invocation.
+var activeProfile = config.DefaultProfile
+
 func main() {
 	// Save original args before any modification
 	originalArgs = make([]string, len(os.Args))
 	copy(originalArgs, os.Args)
 
-	// Extract --server flag before command parsing
+	// Extract --server and --profile flags before command parsing
 	args := os.Args[1:]
 	var serverOverride string
 	var filtered []string
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--server" && i+1 < len(args) {
 			serverOverride = args[i+1]
-			i++ // skip value
+			i++
 		} else if len(args[i]) > 9 && args[i][:9] == "--server=" {
 			serverOverride = args[i][9:]
+		} else if args[i] == "--profile" && i+1 < len(args) {
+			activeProfile = args[i+1]
+			i++
+		} else if len(args[i]) > 10 && args[i][:10] == "--profile=" {
+			activeProfile = args[i][10:]
 		} else {
 			filtered = append(filtered, args[i])
 		}
@@ -51,8 +59,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	cfg, err := config.Load()
-	if err != nil && os.Args[1] != "login" && os.Args[1] != "version" && os.Args[1] != "help" {
+	cfg, err := config.LoadProfile(activeProfile)
+	if err != nil && os.Args[1] != "login" && os.Args[1] != "version" && os.Args[1] != "help" && os.Args[1] != "profile" {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Run 'izerop login' to configure.\n")
 		os.Exit(1)
@@ -101,6 +109,8 @@ func main() {
 		cmdLogs()
 	case "update":
 		cmdUpdate()
+	case "profile":
+		cmdProfile()
 	case "help":
 		if len(os.Args) > 2 {
 			printCommandHelp(os.Args[2])
@@ -119,54 +129,68 @@ func newClient(cfg *config.Config) *api.Client {
 }
 
 func cmdStatus(cfg *config.Config) {
-	client := newClient(cfg)
-
-	fmt.Printf("Server:  %s\n", cfg.ServerURL)
-	if cfg.SyncDir != "" {
-		fmt.Printf("Sync:    %s\n", cfg.SyncDir)
+	profiles, _ := config.ListProfiles()
+	if len(profiles) == 0 {
+		profiles = []string{activeProfile}
 	}
 
-	// Watcher status
-	fmt.Printf("\n")
-	watcherRunning, watcherPID := getWatcherStatus()
-	if watcherRunning {
-		fmt.Printf("Watcher: ✅ running (PID %d)\n", watcherPID)
-		// Show uptime if /proc is available (Linux)
-		if statInfo, err := os.Stat(fmt.Sprintf("/proc/%d", watcherPID)); err == nil {
-			uptime := time.Since(statInfo.ModTime()).Truncate(time.Second)
-			fmt.Printf("Uptime:  %s\n", uptime)
+	for i, name := range profiles {
+		if i > 0 {
+			fmt.Println()
 		}
-	} else {
-		fmt.Printf("Watcher: ⏹ not running\n")
-	}
 
-	// Remote stats
-	fmt.Printf("\n")
-	status, err := client.GetSyncStatus()
-	if err != nil {
-		fmt.Printf("Remote:  error (%v)\n", err)
-		return
-	}
-	fmt.Printf("Files:   %d\n", status.FileCount)
-	fmt.Printf("Dirs:    %d\n", status.DirectoryCount)
-	fmt.Printf("Size:    %s\n", formatSize(status.TotalSize))
-	if status.LastSync != "" {
-		fmt.Printf("Cursor:  %s\n", status.Cursor)
-	}
+		pcfg, err := config.LoadProfile(name)
+		if err != nil {
+			fmt.Printf("Profile: %s (error: %v)\n", name, err)
+			continue
+		}
 
-	// Local state info
-	if cfg.SyncDir != "" {
-		state, _ := sync.LoadState(cfg.SyncDir)
-		trackedFiles := len(state.Files)
-		trackedNotes := len(state.Notes)
-		fmt.Printf("\nTracked: %d files, %d notes\n", trackedFiles, trackedNotes)
+		active := ""
+		if name == activeProfile {
+			active = " ★"
+		}
+		fmt.Printf("Profile: %s%s\n", name, active)
+		fmt.Printf("Server:  %s\n", pcfg.ServerURL)
+		if pcfg.SyncDir != "" {
+			fmt.Printf("Sync:    %s\n", pcfg.SyncDir)
+		}
+
+		// Watcher status
+		running, pid := getWatcherStatusForProfile(name)
+		if running {
+			fmt.Printf("Watcher: ✅ running (PID %d)\n", pid)
+			if statInfo, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err == nil {
+				uptime := time.Since(statInfo.ModTime()).Truncate(time.Second)
+				fmt.Printf("Uptime:  %s\n", uptime)
+			}
+		} else {
+			fmt.Printf("Watcher: ⏹ not running\n")
+		}
+
+		// Remote stats
+		if pcfg.Token != "" {
+			client := api.NewClient(pcfg.ServerURL, pcfg.Token)
+			status, err := client.GetSyncStatus()
+			if err != nil {
+				fmt.Printf("Remote:  error (%v)\n", err)
+			} else {
+				fmt.Printf("Files:   %d\n", status.FileCount)
+				fmt.Printf("Dirs:    %d\n", status.DirectoryCount)
+				fmt.Printf("Size:    %s\n", formatSize(status.TotalSize))
+			}
+		}
+
+		// Local state
+		if pcfg.SyncDir != "" {
+			state, _ := sync.LoadState(pcfg.SyncDir)
+			fmt.Printf("Tracked: %d files, %d notes\n", len(state.Files), len(state.Notes))
+		}
 	}
 }
 
-// getWatcherStatus checks if the background watcher is running.
-// Returns (running, pid).
-func getWatcherStatus() (bool, int) {
-	pidPath := pidFilePath()
+// getWatcherStatusForProfile checks if a profile's watcher is running.
+func getWatcherStatusForProfile(profile string) (bool, int) {
+	pidPath := profilePIDPath(profile)
 	data, err := os.ReadFile(pidPath)
 	if err != nil {
 		return false, 0
@@ -177,15 +201,12 @@ func getWatcherStatus() (bool, int) {
 		return false, 0
 	}
 
-	// Check if process is actually running
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return false, 0
 	}
 
-	// Signal 0 checks if process exists without killing it
 	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		// Process not running, clean up stale PID file
 		os.Remove(pidPath)
 		return false, 0
 	}
@@ -732,25 +753,49 @@ func openLogFile(path string) (*os.File, error) {
 }
 
 func defaultLogPath() string {
-	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "izerop", "watch.log")
+	return profileLogPath(activeProfile)
 }
 
 func pidFilePath() string {
-	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "izerop", "watch.pid")
+	return profilePIDPath(activeProfile)
 }
 
 func watchArgsPath() string {
-	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "izerop", "watch.args.json")
+	dir, _ := config.ProfileDir(activeProfile)
+	return filepath.Join(dir, "watch.args.json")
+}
+
+func profileLogPath(profile string) string {
+	p, err := config.ProfileLogPath(profile)
+	if err != nil {
+		dir, _ := os.UserConfigDir()
+		return filepath.Join(dir, "izerop", "watch.log")
+	}
+	return p
+}
+
+func profilePIDPath(profile string) string {
+	p, err := config.ProfilePIDPath(profile)
+	if err != nil {
+		dir, _ := os.UserConfigDir()
+		return filepath.Join(dir, "izerop", "watch.pid")
+	}
+	return p
 }
 
 func cmdWatchStop() {
+	// If --all flag, stop all profile watchers
+	for _, arg := range os.Args[2:] {
+		if arg == "--all" {
+			stopAllWatchers()
+			return
+		}
+	}
+
 	pidPath := pidFilePath()
 	data, err := os.ReadFile(pidPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "No running watcher found (no PID file)\n")
+		fmt.Fprintf(os.Stderr, "No running watcher found for profile %q\n", activeProfile)
 		os.Exit(1)
 	}
 
@@ -775,11 +820,173 @@ func cmdWatchStop() {
 	}
 
 	os.Remove(pidPath)
-	fmt.Printf("⏹ Stopped watcher (PID %d)\n", pid)
+	fmt.Printf("⏹ Stopped watcher for %q (PID %d)\n", activeProfile, pid)
+}
+
+func stopAllWatchers() {
+	profiles, _ := config.ListProfiles()
+	stopped := 0
+	for _, name := range profiles {
+		running, pid := getWatcherStatusForProfile(name)
+		if running {
+			proc, _ := os.FindProcess(pid)
+			if err := proc.Signal(syscall.SIGTERM); err == nil {
+				pidPath := profilePIDPath(name)
+				os.Remove(pidPath)
+				fmt.Printf("⏹ Stopped %q (PID %d)\n", name, pid)
+				stopped++
+			}
+		}
+	}
+	if stopped == 0 {
+		fmt.Println("No running watchers found.")
+	}
+}
+
+func cmdProfile() {
+	if len(os.Args) < 3 {
+		// Default: list profiles
+		cmdProfileList()
+		return
+	}
+
+	switch os.Args[2] {
+	case "list", "ls":
+		cmdProfileList()
+	case "add", "create":
+		cmdProfileAdd()
+	case "remove", "rm", "delete":
+		cmdProfileRemove()
+	case "use", "switch":
+		cmdProfileUse()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown profile command: %s\n", os.Args[2])
+		fmt.Fprintf(os.Stderr, "Usage: izerop profile [list|add|remove|use]\n")
+		os.Exit(1)
+	}
+}
+
+func cmdProfileList() {
+	profiles, err := config.ListProfiles()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing profiles: %v\n", err)
+		os.Exit(1)
+	}
+	if len(profiles) == 0 {
+		fmt.Println("No profiles configured. Run 'izerop profile add <name>' to create one.")
+		return
+	}
+	current := config.GetActiveProfile()
+	for _, name := range profiles {
+		marker := "  "
+		if name == current {
+			marker = "★ "
+		}
+		pcfg, _ := config.LoadProfile(name)
+		server := ""
+		if pcfg != nil {
+			server = pcfg.ServerURL
+		}
+		running, _ := getWatcherStatusForProfile(name)
+		status := "⏹"
+		if running {
+			status = "✅"
+		}
+		fmt.Printf("%s%s %s  %s\n", marker, name, status, server)
+	}
+}
+
+func cmdProfileAdd() {
+	if len(os.Args) < 4 {
+		fmt.Fprintf(os.Stderr, "Usage: izerop profile add <name> [--server <url>] [--token <token>] [--sync-dir <path>]\n")
+		os.Exit(1)
+	}
+	name := os.Args[3]
+
+	cfg := &config.Config{
+		ServerURL: "https://izerop.com",
+	}
+
+	for i := 4; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--server":
+			if i+1 < len(os.Args) {
+				cfg.ServerURL = os.Args[i+1]
+				i++
+			}
+		case "--token":
+			if i+1 < len(os.Args) {
+				cfg.Token = os.Args[i+1]
+				i++
+			}
+		case "--sync-dir":
+			if i+1 < len(os.Args) {
+				cfg.SyncDir = os.Args[i+1]
+				i++
+			}
+		}
+	}
+
+	if err := config.SaveProfile(name, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating profile: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Profile %q created\n", name)
+	if cfg.Token == "" {
+		fmt.Printf("   Set token: izerop --profile %s login\n", name)
+	}
+}
+
+func cmdProfileRemove() {
+	if len(os.Args) < 4 {
+		fmt.Fprintf(os.Stderr, "Usage: izerop profile remove <name>\n")
+		os.Exit(1)
+	}
+	name := os.Args[3]
+
+	// Stop watcher if running
+	if running, _ := getWatcherStatusForProfile(name); running {
+		fmt.Fprintf(os.Stderr, "Stop the watcher first: izerop --profile %s watch --stop\n", name)
+		os.Exit(1)
+	}
+
+	if err := config.DeleteProfile(name); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("🗑 Profile %q removed\n", name)
+
+	// If we removed the active profile, switch to default
+	if config.GetActiveProfile() == name {
+		config.SetActiveProfile(config.DefaultProfile)
+	}
+}
+
+func cmdProfileUse() {
+	if len(os.Args) < 4 {
+		fmt.Fprintf(os.Stderr, "Usage: izerop profile use <name>\n")
+		os.Exit(1)
+	}
+	name := os.Args[3]
+
+	// Verify profile exists
+	if _, err := config.LoadProfile(name); err != nil {
+		fmt.Fprintf(os.Stderr, "Profile %q not found\n", name)
+		os.Exit(1)
+	}
+
+	if err := config.SetActiveProfile(name); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("★ Active profile: %s\n", name)
 }
 
 func cmdLogs() {
-	// Usage: izerop logs [--tail <n>] [--follow]
+	// Usage: izerop logs [--tail <n>] [--follow] [--profile <name>]
 	logPath := defaultLogPath()
 	tail := 50
 	follow := false
@@ -1115,12 +1322,20 @@ Commands:
   ls        List remote files and directories
   rm        Delete a file or directory
   mv        Move/rename a file
+  profile   Manage profiles (list, add, remove, use)
   update    Self-update to latest release
   version   Print version
   help      Show this help
 
+Profile Commands:
+  profile list                  List all profiles
+  profile add <name> [opts]     Create a profile (--server, --token, --sync-dir)
+  profile remove <name>         Delete a profile
+  profile use <name>            Set active profile
+
 Options:
-  --server URL    Override server URL (default: config or https://izerop.com)
+  --server URL      Override server URL
+  --profile NAME    Use a specific profile (default: active profile)
 
 Environment:
   IZEROP_SERVER_URL   Override server URL

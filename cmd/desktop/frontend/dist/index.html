@@ -418,12 +418,16 @@
                 <span class="icon">⚙️</span> Settings
             </div>
             <div style="flex:1"></div>
+            <div class="nav-item" data-screen="profiles" onclick="navigate('profiles')">
+                <span class="icon">👤</span> Profiles
+            </div>
             <div class="nav-item" data-screen="updates" onclick="navigate('updates')">
                 <span class="icon">🔄</span> Updates
             </div>
             <div class="nav-item" onclick="logout()" style="color: var(--error);">
                 <span class="icon">🚪</span> Logout
             </div>
+            <div id="active-profile-label" style="font-size: 11px; color: var(--accent); text-align: center; padding: 4px 0; opacity: 0.7;"></div>
             <div id="version-label" style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 8px 0; opacity: 0.5;"></div>
             <div id="update-badge" style="display:none; font-size: 10px; color: var(--accent); text-align: center; padding: 0 0 8px; cursor: pointer;" onclick="navigate('updates')">Update available!</div>
         </div>
@@ -522,6 +526,26 @@
                 </div>
             </div>
 
+            <!-- Profiles -->
+            <div id="page-profiles" class="screen">
+                <div class="section-header">
+                    <h2>Profiles</h2>
+                </div>
+
+                <div id="profiles-list" style="margin-bottom: 16px;"></div>
+
+                <div class="sync-dir-box">
+                    <div class="label">Add New Profile</div>
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+                        <input type="text" id="new-profile-name" placeholder="Profile name" style="padding:8px 12px;background:var(--bg);border:1px solid rgba(255,255,255,0.1);border-radius:var(--radius);color:var(--text);font-size:13px;outline:none;">
+                        <input type="text" id="new-profile-server" placeholder="Server URL (default: https://izerop.com)" style="padding:8px 12px;background:var(--bg);border:1px solid rgba(255,255,255,0.1);border-radius:var(--radius);color:var(--text);font-size:13px;outline:none;">
+                        <input type="password" id="new-profile-token" placeholder="API Token" style="padding:8px 12px;background:var(--bg);border:1px solid rgba(255,255,255,0.1);border-radius:var(--radius);color:var(--text);font-size:13px;outline:none;">
+                        <input type="text" id="new-profile-syncdir" placeholder="Sync directory (e.g. ~/izerop)" style="padding:8px 12px;background:var(--bg);border:1px solid rgba(255,255,255,0.1);border-radius:var(--radius);color:var(--text);font-size:13px;outline:none;">
+                        <button class="btn btn-sm" onclick="addProfile()">➕ Add Profile</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Updates -->
             <div id="page-updates" class="screen">
                 <div class="section-header">
@@ -600,6 +624,7 @@
             if (page === 'activity') { refreshLogs(); }
             if (page === 'sync') { refreshSyncConfig(); refreshLogs(); }
             if (page === 'settings') { refreshSyncConfig(); }
+            if (page === 'profiles') { refreshProfiles(); }
             if (page === 'updates') { checkForUpdate(); }
         }
 
@@ -611,6 +636,7 @@
                     refreshStatus();
                     refreshSyncConfig();
                     refreshWatcherInfo();
+                    refreshProfiles();
                     // Check for updates in background
                     window.go.main.App.CheckForUpdate().then(info => {
                         if (info.available) {
@@ -825,6 +851,83 @@
             const result = await window.go.main.App.SaveIgnoreRules(rules);
             if (result.success) {
                 alert('Ignore rules saved!');
+            } else {
+                alert(result.error);
+            }
+        }
+
+        // ---- Profiles ----
+        async function refreshProfiles() {
+            const profiles = await window.go.main.App.GetProfiles();
+            const el = document.getElementById('profiles-list');
+
+            // Update sidebar label
+            const activeLabel = document.getElementById('active-profile-label');
+            const active = profiles.find(p => p.active);
+            activeLabel.textContent = active ? active.name : '';
+
+            if (!profiles || profiles.length === 0) {
+                el.innerHTML = '<div style="color: var(--text-dim); padding: 16px;">No profiles yet.</div>';
+                return;
+            }
+
+            el.innerHTML = profiles.map(p => `
+                <div class="sync-dir-box" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; ${p.active ? 'border: 1px solid var(--accent);' : ''}">
+                    <div>
+                        <div style="font-size:14px; font-weight:600; color:var(--text);">
+                            ${p.active ? '★ ' : ''}${escapeHtml(p.name)}
+                            ${p.watching ? '<span style="color:var(--success); font-size:11px; margin-left:6px;">● watching</span>' : ''}
+                        </div>
+                        <div style="font-size:12px; color:var(--text-dim); margin-top:2px;">
+                            ${escapeHtml(p.server)}${p.syncDir ? ' — ' + escapeHtml(p.syncDir) : ''}
+                            ${!p.hasToken ? ' <span style="color:var(--warn);">(no token)</span>' : ''}
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:6px;">
+                        ${!p.active ? '<button class="btn btn-sm btn-outline" onclick="switchProfile(\'' + escapeHtml(p.name) + '\')">Use</button>' : ''}
+                        ${p.name !== 'default' ? '<button class="btn btn-sm btn-outline" style="color:var(--error);border-color:rgba(248,113,113,0.2);" onclick="removeProfile(\'' + escapeHtml(p.name) + '\')">✕</button>' : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function switchProfile(name) {
+            const result = await window.go.main.App.SwitchProfile(name);
+            if (result.success) {
+                refreshProfiles();
+                refreshStatus();
+                refreshSyncConfig();
+                refreshWatcherInfo();
+            } else {
+                alert(result.error);
+            }
+        }
+
+        async function addProfile() {
+            const name = document.getElementById('new-profile-name').value.trim();
+            const server = document.getElementById('new-profile-server').value.trim();
+            const token = document.getElementById('new-profile-token').value.trim();
+            const syncDir = document.getElementById('new-profile-syncdir').value.trim();
+
+            if (!name) { alert('Profile name is required'); return; }
+
+            const result = await window.go.main.App.AddProfile(name, server, token, syncDir);
+            if (result.success) {
+                document.getElementById('new-profile-name').value = '';
+                document.getElementById('new-profile-server').value = '';
+                document.getElementById('new-profile-token').value = '';
+                document.getElementById('new-profile-syncdir').value = '';
+                refreshProfiles();
+            } else {
+                alert(result.error);
+            }
+        }
+
+        async function removeProfile(name) {
+            if (!confirm('Remove profile "' + name + '"?')) return;
+            const result = await window.go.main.App.RemoveProfile(name);
+            if (result.success) {
+                refreshProfiles();
             } else {
                 alert(result.error);
             }

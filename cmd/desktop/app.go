@@ -26,6 +26,7 @@ type App struct {
 	ctx     context.Context
 	client  *api.Client
 	cfg     *config.Config
+	profile string
 	watcher *watcher.Watcher
 	watchMu gosync.Mutex
 
@@ -51,7 +52,8 @@ func NewApp() *App {
 // startup is called when the app starts
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	cfg, err := config.Load()
+	a.profile = config.GetActiveProfile()
+	cfg, err := config.LoadProfile(a.profile)
 	if err == nil && cfg.Token != "" {
 		a.cfg = cfg
 		a.client = api.NewClient(cfg.ServerURL, cfg.Token)
@@ -62,7 +64,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// Check if a CLI watcher is already running
 	if running, pid := a.cliWatcherRunning(); running {
-		a.addLog("info", fmt.Sprintf("CLI watcher detected (PID %d)", pid))
+		a.addLog("info", fmt.Sprintf("CLI watcher detected (PID %d) for profile %q", pid, a.profile))
 	}
 }
 
@@ -180,13 +182,13 @@ func (a *App) Login(serverURL, token string) LoginResult {
 	if a.cfg != nil {
 		cfg.SyncDir = a.cfg.SyncDir
 	}
-	if err := config.Save(cfg); err != nil {
+	if err := config.SaveProfile(a.profile, cfg); err != nil {
 		return LoginResult{Success: false, Error: fmt.Sprintf("Could not save config: %v", err)}
 	}
 
 	a.cfg = cfg
 	a.client = client
-	a.addLog("success", "Connected to "+serverURL)
+	a.addLog("success", fmt.Sprintf("Connected to %s (profile: %s)", serverURL, a.profile))
 
 	return LoginResult{Success: true}
 }
@@ -284,7 +286,7 @@ func (a *App) setSyncDir(dir string) ActionResult {
 	}
 
 	a.cfg.SyncDir = dir
-	if err := config.Save(a.cfg); err != nil {
+	if err := config.SaveProfile(a.profile, a.cfg); err != nil {
 		return ActionResult{Success: false, Error: fmt.Sprintf("Could not save config: %v", err)}
 	}
 
@@ -446,22 +448,27 @@ func (a *App) ClearLogs() {
 
 // ---- CLI Watcher Integration ----
 
-func cliConfigDir() string {
-	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "izerop")
+func (a *App) cliPIDPath() string {
+	p, err := config.ProfilePIDPath(a.profile)
+	if err != nil {
+		dir, _ := os.UserConfigDir()
+		return filepath.Join(dir, "izerop", "watch.pid")
+	}
+	return p
 }
 
-func cliPIDPath() string {
-	return filepath.Join(cliConfigDir(), "watch.pid")
-}
-
-func cliLogPath() string {
-	return filepath.Join(cliConfigDir(), "watch.log")
+func (a *App) cliLogPath() string {
+	p, err := config.ProfileLogPath(a.profile)
+	if err != nil {
+		dir, _ := os.UserConfigDir()
+		return filepath.Join(dir, "izerop", "watch.log")
+	}
+	return p
 }
 
 // cliWatcherRunning checks if the CLI watcher daemon is running.
 func (a *App) cliWatcherRunning() (bool, int) {
-	data, err := os.ReadFile(cliPIDPath())
+	data, err := os.ReadFile(a.cliPIDPath())
 	if err != nil {
 		return false, 0
 	}
@@ -505,7 +512,7 @@ func (a *App) GetWatcherInfo() WatcherInfo {
 
 // loadExistingLogs reads the last N lines from the CLI watcher log file.
 func (a *App) loadExistingLogs() {
-	logPath := cliLogPath()
+	logPath := a.cliLogPath()
 	f, err := os.Open(logPath)
 	if err != nil {
 		return
@@ -636,6 +643,114 @@ func (a *App) RestartApp() {
 
 	// Exit current instance
 	os.Exit(0)
+}
+
+// ---- Profile Management ----
+
+type ProfileInfo struct {
+	Name      string `json:"name"`
+	Active    bool   `json:"active"`
+	Server    string `json:"server"`
+	SyncDir   string `json:"syncDir"`
+	HasToken  bool   `json:"hasToken"`
+	Watching  bool   `json:"watching"`
+}
+
+func (a *App) GetProfiles() []ProfileInfo {
+	profiles, _ := config.ListProfiles()
+	if len(profiles) == 0 {
+		profiles = []string{config.DefaultProfile}
+	}
+	var result []ProfileInfo
+	for _, name := range profiles {
+		info := ProfileInfo{Name: name, Active: name == a.profile}
+		if pcfg, err := config.LoadProfile(name); err == nil {
+			info.Server = pcfg.ServerURL
+			info.SyncDir = pcfg.SyncDir
+			info.HasToken = pcfg.Token != ""
+		}
+		// Check if watcher running for this profile
+		pidPath, _ := config.ProfilePIDPath(name)
+		if data, err := os.ReadFile(pidPath); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				if proc, err := os.FindProcess(pid); err == nil {
+					if proc.Signal(syscall.Signal(0)) == nil {
+						info.Watching = true
+					}
+				}
+			}
+		}
+		result = append(result, info)
+	}
+	return result
+}
+
+func (a *App) SwitchProfile(name string) ActionResult {
+	pcfg, err := config.LoadProfile(name)
+	if err != nil {
+		return ActionResult{Success: false, Error: fmt.Sprintf("Profile %q not found", name)}
+	}
+
+	// Stop current watcher if app-managed
+	a.StopWatch()
+
+	a.profile = name
+	a.cfg = pcfg
+	if pcfg.Token != "" {
+		a.client = api.NewClient(pcfg.ServerURL, pcfg.Token)
+	} else {
+		a.client = nil
+	}
+
+	config.SetActiveProfile(name)
+
+	// Reload logs for this profile
+	a.logMu.Lock()
+	a.logs = nil
+	a.logMu.Unlock()
+	a.loadExistingLogs()
+
+	a.addLog("info", fmt.Sprintf("Switched to profile: %s", name))
+	return ActionResult{Success: true}
+}
+
+func (a *App) AddProfile(name, serverURL, token, syncDir string) ActionResult {
+	if name == "" {
+		return ActionResult{Success: false, Error: "Profile name is required"}
+	}
+	if serverURL == "" {
+		serverURL = "https://izerop.com"
+	}
+
+	cfg := &config.Config{
+		ServerURL: serverURL,
+		Token:     token,
+		SyncDir:   syncDir,
+	}
+
+	if err := config.SaveProfile(name, cfg); err != nil {
+		return ActionResult{Success: false, Error: err.Error()}
+	}
+
+	a.addLog("success", fmt.Sprintf("Profile %q created", name))
+	return ActionResult{Success: true}
+}
+
+func (a *App) RemoveProfile(name string) ActionResult {
+	if err := config.DeleteProfile(name); err != nil {
+		return ActionResult{Success: false, Error: err.Error()}
+	}
+
+	if a.profile == name {
+		a.SwitchProfile(config.DefaultProfile)
+	}
+
+	a.addLog("info", fmt.Sprintf("Profile %q removed", name))
+	return ActionResult{Success: true}
+}
+
+func (a *App) GetActiveProfileName() string {
+	return a.profile
 }
 
 func (a *App) SaveIgnoreRules(rules string) ActionResult {
