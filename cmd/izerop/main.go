@@ -92,6 +92,8 @@ func main() {
 		cmdSync(cfg)
 	case "push":
 		cmdPush(cfg)
+	case "url":
+		cmdURL(cfg)
 	case "pull":
 		cmdPull(cfg)
 	case "ls":
@@ -366,6 +368,91 @@ func cmdPush(cfg *config.Config) {
 	}
 
 	fmt.Printf("✅ Uploaded: %s (%s)\n", file.Name, file.ID[:8])
+}
+
+func cmdURL(cfg *config.Config) {
+	// Usage: izerop url <file>
+	// Resolves a local file path to its remote URL via the sync state or by searching remote files.
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: izerop url <file>\n")
+		os.Exit(1)
+	}
+
+	filePath := os.Args[2]
+
+	// Resolve to absolute path
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid path: %v\n", err)
+		os.Exit(1)
+	}
+
+	client := newClient(cfg)
+
+	// Try to find via sync state first (faster, no API calls for ID lookup)
+	syncDir := cfg.SyncDir
+	if syncDir != "" {
+		absSyncDir, _ := filepath.Abs(syncDir)
+		if strings.HasPrefix(absPath, absSyncDir+"/") {
+			relPath, _ := filepath.Rel(absSyncDir, absPath)
+			state, _ := sync.LoadState(activeProfile)
+
+			// Check Files state
+			if rec, ok := state.Files[relPath]; ok && rec.RemoteID != "" {
+				file, err := client.GetFile(rec.RemoteID)
+				if err == nil && file.URL != "" {
+					fmt.Println(file.URL)
+					return
+				}
+				// If URL not available, fall through to show the download endpoint
+				if err == nil {
+					fmt.Printf("%s/api/v1/files/%s/download\n", cfg.ServerURL, rec.RemoteID)
+					return
+				}
+			}
+
+			// Check Notes state
+			if noteID, ok := state.Notes[relPath]; ok {
+				file, err := client.GetFile(noteID)
+				if err == nil && file.URL != "" {
+					fmt.Println(file.URL)
+					return
+				}
+				if err == nil {
+					fmt.Printf("%s/api/v1/files/%s/download\n", cfg.ServerURL, noteID)
+					return
+				}
+			}
+		}
+	}
+
+	// Fallback: search remote files by name
+	fileName := filepath.Base(absPath)
+	dirs, err := client.ListDirectories()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	for _, dir := range dirs {
+		files, err := client.ListFiles(dir.ID)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.Name == fileName {
+				if f.URL != "" {
+					fmt.Println(f.URL)
+				} else {
+					fmt.Printf("%s/api/v1/files/%s/download\n", cfg.ServerURL, f.ID)
+				}
+				return
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "File not found on server: %s\n", fileName)
+	os.Exit(1)
 }
 
 func cmdPull(cfg *config.Config) {
@@ -1367,6 +1454,18 @@ func printCommandHelp(cmd string) {
     izerop push photo.jpg --dir abc123
     izerop push IMG_001.jpg --dir abc123 --name vacation.jpg`,
 
+		"url": `izerop url <file>
+
+  Get the direct asset URL for a synced file. Looks up the file in your sync
+  state first (fast), then falls back to searching by filename on the server.
+
+  Output is just the URL — pipe-friendly for scripts.
+
+  Examples:
+    izerop url photo.jpg                      # from current directory
+    izerop url ~/izerop/docs/readme.md        # absolute path
+    izerop push photo.jpg && izerop url photo.jpg   # push then get URL`,
+
 		"pull": `izerop pull <file-id> [options]
 
   Download a file by ID.
@@ -1457,6 +1556,7 @@ Commands:
   watch     Watch and sync (fsnotify + polling, --daemon for background)
   logs      View watch daemon logs (--follow, --tail N)
   push      Upload files to server
+  url       Get the direct asset URL for a file
   pull      Download files from server
   ls        List remote files and directories
   rm        Delete a file or directory

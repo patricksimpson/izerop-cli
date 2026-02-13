@@ -89,11 +89,35 @@ type FileEntry struct {
 	Size        int64  `json:"size"`
 	ContentType string `json:"content_type"`
 	ContentHash string `json:"content_hash,omitempty"`
+	URL         string `json:"url,omitempty"`
 	Public      bool   `json:"public"`
 	HasBinary   bool   `json:"has_binary"`
 	HasText     bool   `json:"has_text"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
+}
+
+// GetFile fetches a single file by ID.
+func (c *Client) GetFile(fileID string) (*FileEntry, error) {
+	path := fmt.Sprintf("/api/v1/files/%s", fileID)
+	resp, err := c.do("GET", path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var wrapper struct {
+		File FileEntry `json:"file"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
+		return nil, fmt.Errorf("could not decode response: %w", err)
+	}
+
+	return &wrapper.File, nil
 }
 
 // ListFiles fetches the file listing.
