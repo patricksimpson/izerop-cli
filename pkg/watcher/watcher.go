@@ -34,6 +34,7 @@ type Watcher struct {
 	fsw      *fsnotify.Watcher
 	pushCh   chan struct{} // signal to trigger a push
 	stopCh   chan struct{}
+	pulling  bool // true while pull is in progress — suppresses fsnotify events
 }
 
 // New creates a new Watcher.
@@ -90,7 +91,7 @@ func (w *Watcher) Run() error {
 			if !ok {
 				return nil
 			}
-			if w.shouldIgnore(event.Name) {
+			if w.pulling || w.shouldIgnore(event.Name) {
 				continue
 			}
 			if w.cfg.Verbose {
@@ -150,6 +151,7 @@ func (w *Watcher) Stop() {
 
 func (w *Watcher) runSync(reason string) {
 	w.cfg.Logger.Printf("Sync (%s)...", reason)
+	w.pulling = true
 	engine := sync.NewEngine(w.cfg.Client, w.cfg.SyncDir, w.state)
 	engine.Verbose = w.cfg.Verbose
 
@@ -167,6 +169,9 @@ func (w *Watcher) runSync(reason string) {
 			w.cfg.Logger.Printf("⚠ pull: %s", e)
 		}
 	}
+
+	// Done pulling — allow fsnotify events again before push
+	w.pulling = false
 
 	// Push
 	pushResult, err := engine.PushSync()
@@ -186,6 +191,9 @@ func (w *Watcher) runSync(reason string) {
 }
 
 func (w *Watcher) runPull() {
+	w.pulling = true
+	defer func() { w.pulling = false }()
+
 	engine := sync.NewEngine(w.cfg.Client, w.cfg.SyncDir, w.state)
 	engine.Verbose = w.cfg.Verbose
 
@@ -257,7 +265,7 @@ func (w *Watcher) shouldIgnore(path string) bool {
 	if strings.Contains(name, ".conflict") {
 		return true
 	}
-	if strings.HasSuffix(name, "~") || strings.HasSuffix(name, ".swp") {
+	if strings.HasSuffix(name, "~") || strings.HasSuffix(name, ".swp") || strings.HasSuffix(name, ".izerop-tmp") {
 		return true
 	}
 	return false
