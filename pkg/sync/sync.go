@@ -274,8 +274,21 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 		// It's a regular file — check if it needs uploading
 		remoteFile, exists := remoteFilesByPath[remotePath]
 		if exists {
-			// Use content hash for reliable comparison (size alone causes false positives)
+			// If server provides content_hash, compare directly
 			localHash, hashErr := HashFile(path)
+			if hashErr == nil && remoteFile.ContentHash != "" && localHash == remoteFile.ContentHash {
+				e.State.Files[relPath] = FileRecord{
+					RemoteID:   remoteFile.ID,
+					Size:       info.Size(),
+					Hash:       localHash,
+					RemoteTime: remoteFile.UpdatedAt,
+					LocalMod:   info.ModTime().Unix(),
+				}
+				result.Skipped++
+				return nil
+			}
+
+			// Fallback: use local state hash for comparison
 			if hashErr == nil {
 				if rec, tracked := e.State.Files[relPath]; tracked && rec.Hash != "" && rec.Hash == localHash && rec.RemoteTime == remoteFile.UpdatedAt {
 					// Hash matches what we last synced AND remote hasn't changed — skip
@@ -571,6 +584,27 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 				}
 				result.Skipped++
 				return
+			}
+		}
+
+		// If server provides content_hash, skip download when local matches
+		if change.ContentHash != "" {
+			if _, statErr := os.Stat(localPath); statErr == nil {
+				localHash, hashErr := HashFile(localPath)
+				if hashErr == nil && localHash == change.ContentHash {
+					// Content identical — update state and skip
+					if newInfo, infoErr := os.Stat(localPath); infoErr == nil {
+						e.State.Files[localRel] = FileRecord{
+							RemoteID:   change.ID,
+							Size:       newInfo.Size(),
+							Hash:       localHash,
+							RemoteTime: change.UpdatedAt,
+							LocalMod:   newInfo.ModTime().Unix(),
+						}
+					}
+					result.Skipped++
+					return
+				}
 			}
 		}
 
