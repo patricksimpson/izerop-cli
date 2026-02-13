@@ -88,6 +88,7 @@ type FileEntry struct {
 	DirectoryID string `json:"directory_id"`
 	Size        int64  `json:"size"`
 	ContentType string `json:"content_type"`
+	ContentHash string `json:"content_hash,omitempty"`
 	Public      bool   `json:"public"`
 	HasBinary   bool   `json:"has_binary"`
 	HasText     bool   `json:"has_text"`
@@ -167,6 +168,7 @@ type Change struct {
 	ParentID    string `json:"parent_id"`
 	Size        int64  `json:"size"`
 	ContentType string `json:"content_type"`
+	ContentHash string `json:"content_hash,omitempty"`
 	UpdatedAt   string `json:"updated_at"`
 }
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/patricksimpson/izerop-cli/pkg/api"
 )
@@ -252,6 +253,13 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 			if updateErr != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("update note %s: %v", relPath, updateErr))
 			} else {
+				noteHash, _ := HashFile(path)
+				e.State.Files[relPath] = FileRecord{
+					RemoteID: noteID,
+					Size:     info.Size(),
+					Hash:     noteHash,
+					LocalMod: info.ModTime().Unix(),
+				}
 				result.Uploaded++
 			}
 			return nil
@@ -266,16 +274,42 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 		// It's a regular file — check if it needs uploading
 		remoteFile, exists := remoteFilesByPath[remotePath]
 		if exists {
-			if remoteFile.Size == info.Size() {
-				// Update tracking record
+			// If server provides content_hash, compare directly
+			localHash, hashErr := HashFile(path)
+			if hashErr == nil && remoteFile.ContentHash != "" && localHash == remoteFile.ContentHash {
 				e.State.Files[relPath] = FileRecord{
 					RemoteID:   remoteFile.ID,
 					Size:       info.Size(),
+					Hash:       localHash,
 					RemoteTime: remoteFile.UpdatedAt,
 					LocalMod:   info.ModTime().Unix(),
 				}
 				result.Skipped++
 				return nil
+			}
+
+			// Fallback: use local state hash for comparison
+			if hashErr == nil {
+				if rec, tracked := e.State.Files[relPath]; tracked && rec.Hash != "" && rec.Hash == localHash && rec.RemoteTime == remoteFile.UpdatedAt {
+					// Hash matches what we last synced AND remote hasn't changed — skip
+					result.Skipped++
+					return nil
+				}
+			}
+
+			if remoteFile.Size == info.Size() && localHash != "" {
+				if rec, tracked := e.State.Files[relPath]; tracked && rec.Hash == localHash {
+					// Same hash as last sync, same size — remote metadata might differ but content is same
+					e.State.Files[relPath] = FileRecord{
+						RemoteID:   remoteFile.ID,
+						Size:       info.Size(),
+						Hash:       localHash,
+						RemoteTime: remoteFile.UpdatedAt,
+						LocalMod:   info.ModTime().Unix(),
+					}
+					result.Skipped++
+					return nil
+				}
 			}
 
 			// File exists but size differs — check for conflict
@@ -324,6 +358,14 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 				if updateErr != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("update %s: %v", relPath, updateErr))
 				} else {
+					h, _ := HashFile(path)
+					e.State.Files[relPath] = FileRecord{
+						RemoteID:   remoteFile.ID,
+						Size:       info.Size(),
+						Hash:       h,
+						RemoteTime: remoteFile.UpdatedAt,
+						LocalMod:   info.ModTime().Unix(),
+					}
 					result.Uploaded++
 				}
 				return nil
@@ -352,20 +394,42 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 			if e.Verbose {
 				fmt.Printf("  📝 Creating text: %s\n", relPath)
 			}
-			_, createErr := e.Client.CreateTextFile(info.Name(), string(contents), dirID, "")
+			created, createErr := e.Client.CreateTextFile(info.Name(), string(contents), dirID, "")
 			if createErr != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("create text %s: %v", relPath, createErr))
 			} else {
+				h, _ := HashFile(path)
+				rid := ""
+				if created != nil {
+					rid = created.ID
+				}
+				e.State.Files[relPath] = FileRecord{
+					RemoteID: rid,
+					Size:     info.Size(),
+					Hash:     h,
+					LocalMod: info.ModTime().Unix(),
+				}
 				result.Uploaded++
 			}
 		} else {
 			if e.Verbose {
 				fmt.Printf("  ⬆ Uploading: %s\n", relPath)
 			}
-			_, uploadErr := e.Client.UploadFile(path, dirID, info.Name())
+			uploaded, uploadErr := e.Client.UploadFile(path, dirID, info.Name())
 			if uploadErr != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("upload %s: %v", relPath, uploadErr))
 			} else {
+				h, _ := HashFile(path)
+				rid := ""
+				if uploaded != nil {
+					rid = uploaded.ID
+				}
+				e.State.Files[relPath] = FileRecord{
+					RemoteID: rid,
+					Size:     info.Size(),
+					Hash:     h,
+					LocalMod: info.ModTime().Unix(),
+				}
 				result.Uploaded++
 			}
 		}
@@ -511,6 +575,39 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 		// Ensure parent directory exists
 		os.MkdirAll(filepath.Dir(localPath), 0755)
 
+		// Skip files actively being edited (modified in last 30 seconds)
+		if info, statErr := os.Stat(localPath); statErr == nil {
+			secsSinceMod := time.Now().Unix() - info.ModTime().Unix()
+			if secsSinceMod < 30 {
+				if e.Verbose {
+					fmt.Printf("  ⏳ Skipping (actively edited): %s\n", localRel)
+				}
+				result.Skipped++
+				return
+			}
+		}
+
+		// If server provides content_hash, skip download when local matches
+		if change.ContentHash != "" {
+			if _, statErr := os.Stat(localPath); statErr == nil {
+				localHash, hashErr := HashFile(localPath)
+				if hashErr == nil && localHash == change.ContentHash {
+					// Content identical — update state and skip
+					if newInfo, infoErr := os.Stat(localPath); infoErr == nil {
+						e.State.Files[localRel] = FileRecord{
+							RemoteID:   change.ID,
+							Size:       newInfo.Size(),
+							Hash:       localHash,
+							RemoteTime: change.UpdatedAt,
+							LocalMod:   newInfo.ModTime().Unix(),
+						}
+					}
+					result.Skipped++
+					return
+				}
+			}
+		}
+
 		// Conflict detection: if local file exists and has changed since last sync
 		if info, statErr := os.Stat(localPath); statErr == nil {
 			if rec, tracked := e.State.Files[localRel]; tracked {
@@ -536,7 +633,9 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 			}
 		}
 
-		f, err := os.Create(localPath)
+		// Atomic write: download to temp file, then rename to avoid partial reads
+		tmpPath := localPath + ".izerop-tmp"
+		f, err := os.Create(tmpPath)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("create %s: %v", localPath, err))
 			return
@@ -546,7 +645,13 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 		f.Close()
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("download %s: %v", change.Path, err))
-			os.Remove(localPath)
+			os.Remove(tmpPath)
+			return
+		}
+
+		if err := os.Rename(tmpPath, localPath); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("rename %s: %v", localPath, err))
+			os.Remove(tmpPath)
 			return
 		}
 
@@ -555,11 +660,13 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 			e.State.Notes[localRel] = change.ID
 		}
 
-		// Update file record
+		// Update file record with content hash
 		if newInfo, statErr := os.Stat(localPath); statErr == nil {
+			hash, _ := HashFile(localPath)
 			e.State.Files[localRel] = FileRecord{
 				RemoteID:   change.ID,
 				Size:       newInfo.Size(),
+				Hash:       hash,
 				RemoteTime: change.UpdatedAt,
 				LocalMod:   newInfo.ModTime().Unix(),
 			}
