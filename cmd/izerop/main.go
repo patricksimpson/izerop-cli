@@ -107,10 +107,21 @@ func main() {
 	case "mv":
 		cmdMv(cfg)
 	case "watch":
-		// Handle --stop before full watch
+		// Handle --stop and --start --all before full watch
 		for _, arg := range os.Args[2:] {
 			if arg == "--stop" {
 				cmdWatchStop()
+				return
+			}
+			if arg == "--status" {
+				cmdWatchStatus()
+				return
+			}
+		}
+		// Check for --all (start all profiles)
+		for _, arg := range os.Args[2:] {
+			if arg == "--all" {
+				startAllWatchers()
 				return
 			}
 		}
@@ -1060,6 +1071,81 @@ func stopAllWatchers() {
 	}
 }
 
+func startAllWatchers() {
+	profiles, _ := config.ListProfiles()
+	started := 0
+	skipped := 0
+
+	for _, name := range profiles {
+		pcfg, err := config.LoadProfile(name)
+		if err != nil || pcfg.SyncDir == "" {
+			fmt.Printf("  ⏭ %s (no sync dir configured)\n", name)
+			skipped++
+			continue
+		}
+
+		if running, pid := getWatcherStatusForProfile(name); running {
+			fmt.Printf("  ✅ %s already running (PID %d)\n", name, pid)
+			skipped++
+			continue
+		}
+
+		// Launch daemon for this profile
+		execPath, err := os.Executable()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ %s: could not find executable: %v\n", name, err)
+			continue
+		}
+
+		cmd := exec.Command(execPath, "--profile", name, "watch", "--daemon")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ %s: failed to start: %v\n", name, err)
+			continue
+		}
+		started++
+	}
+
+	if started == 0 && skipped == 0 {
+		fmt.Println("No profiles configured. Run 'izerop profile add <name>' first.")
+	} else {
+		fmt.Printf("\n🎯 Started %d, skipped %d\n", started, skipped)
+	}
+}
+
+func cmdWatchStatus() {
+	profiles, _ := config.ListProfiles()
+	if len(profiles) == 0 {
+		fmt.Println("No profiles configured.")
+		return
+	}
+
+	fmt.Println("Watcher Status:")
+	for _, name := range profiles {
+		running, pid := getWatcherStatusForProfile(name)
+		pcfg, _ := config.LoadProfile(name)
+		syncDir := ""
+		if pcfg != nil {
+			syncDir = pcfg.SyncDir
+		}
+
+		if running {
+			uptime := ""
+			if statInfo, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err == nil {
+				uptime = fmt.Sprintf(", uptime %s", time.Since(statInfo.ModTime()).Truncate(time.Second))
+			}
+			fmt.Printf("  ✅ %-15s  PID %d%s  %s\n", name, pid, uptime, syncDir)
+		} else {
+			status := "⏹ not running"
+			if syncDir == "" {
+				status = "⏭ no sync dir"
+			}
+			fmt.Printf("  %s %-15s  %s\n", status, name, syncDir)
+		}
+	}
+}
+
 func cmdClient(cfg *config.Config) {
 	if cfg == nil {
 		fmt.Fprintf(os.Stderr, "Not logged in. Run 'izerop login' first.\n")
@@ -1469,6 +1555,8 @@ func printCommandHelp(cmd string) {
     -v, --verbose  Log every poll tick, not just changes
     --stop         Stop the running daemon for this profile
     --stop --all   Stop all running profile watchers
+    --all          Start daemons for all profiles with sync dirs
+    --status       Show watcher status for all profiles
 
   Examples:
     izerop watch                          # watch current dir (foreground)
@@ -1476,12 +1564,14 @@ func printCommandHelp(cmd string) {
     izerop watch --interval 10            # poll every 10s
     izerop watch ~/izerop --daemon        # run in background
     izerop watch --stop                   # stop background watcher
+    izerop watch --all                    # start all profile watchers
+    izerop watch --stop --all             # stop all profile watchers
+    izerop watch --status                 # show status of all watchers
 
   Multi-profile:
     izerop --profile default watch --daemon    # start default watcher
     izerop --profile ranger watch --daemon     # start ranger watcher
-    izerop --profile ranger watch --stop       # stop ranger only
-    izerop watch --stop --all                  # stop all watchers`,
+    izerop --profile ranger watch --stop       # stop ranger only`,
 
 		"client": `izerop client [subcommand]
 
