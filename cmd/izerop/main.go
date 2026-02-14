@@ -94,6 +94,8 @@ func main() {
 		cmdPush(cfg)
 	case "url":
 		cmdURL(cfg)
+	case "conflicts":
+		cmdConflicts(cfg)
 	case "pull":
 		cmdPull(cfg)
 	case "ls":
@@ -368,6 +370,101 @@ func cmdPush(cfg *config.Config) {
 	}
 
 	fmt.Printf("✅ Uploaded: %s (%s)\n", file.Name, file.ID[:8])
+}
+
+func cmdConflicts(cfg *config.Config) {
+	// Usage: izerop conflicts [--clean] [--keep-local|--keep-remote]
+	syncDir := cfg.SyncDir
+	if syncDir == "" {
+		syncDir = "."
+	}
+	absDir, err := filepath.Abs(syncDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	clean := false
+	keepLocal := false
+	keepRemote := false
+
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--clean":
+			clean = true
+		case "--keep-local":
+			keepLocal = true
+		case "--keep-remote":
+			keepRemote = true
+		default:
+			if !strings.HasPrefix(os.Args[i], "--") {
+				absDir, _ = filepath.Abs(os.Args[i])
+			}
+		}
+	}
+
+	// Find all conflict files
+	var conflicts []string
+	filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if strings.HasPrefix(info.Name(), ".") && info.IsDir() {
+			return filepath.SkipDir
+		}
+		if strings.Contains(info.Name(), ".conflict") {
+			rel, _ := filepath.Rel(absDir, path)
+			conflicts = append(conflicts, rel)
+		}
+		return nil
+	})
+
+	if len(conflicts) == 0 {
+		fmt.Println("No conflict files found. ✅")
+		return
+	}
+
+	fmt.Printf("Found %d conflict file(s):\n\n", len(conflicts))
+	for _, c := range conflicts {
+		// Figure out the original file name
+		original := strings.Replace(c, ".conflict", "", 1)
+		fmt.Printf("  ⚠ %s\n    original: %s\n", c, original)
+	}
+
+	if !clean {
+		fmt.Println("\nTo resolve:")
+		fmt.Println("  izerop conflicts --clean              # delete all conflict files (keep originals)")
+		fmt.Println("  izerop conflicts --clean --keep-local  # keep local version, delete conflict copies")
+		fmt.Println("  izerop conflicts --clean --keep-remote # keep conflict (remote) version, replace originals")
+		return
+	}
+
+	removed := 0
+	for _, c := range conflicts {
+		conflictPath := filepath.Join(absDir, c)
+
+		if keepRemote {
+			// The conflict file is the remote version — replace original with it
+			original := strings.Replace(c, ".conflict", "", 1)
+			originalPath := filepath.Join(absDir, original)
+			if err := os.Rename(conflictPath, originalPath); err != nil {
+				fmt.Fprintf(os.Stderr, "  ✗ Could not replace %s: %v\n", original, err)
+				continue
+			}
+			fmt.Printf("  ✅ Replaced with remote: %s\n", original)
+			removed++
+		} else if keepLocal || (!keepLocal && !keepRemote) {
+			// Default: keep original, delete conflict file
+			if err := os.Remove(conflictPath); err != nil {
+				fmt.Fprintf(os.Stderr, "  ✗ Could not remove %s: %v\n", c, err)
+				continue
+			}
+			fmt.Printf("  🗑 Removed: %s\n", c)
+			removed++
+		}
+	}
+
+	fmt.Printf("\n✅ Resolved %d conflict(s)\n", removed)
 }
 
 func cmdURL(cfg *config.Config) {
@@ -1454,6 +1551,24 @@ func printCommandHelp(cmd string) {
     izerop push photo.jpg --dir abc123
     izerop push IMG_001.jpg --dir abc123 --name vacation.jpg`,
 
+		"conflicts": `izerop conflicts [options]
+
+  List and resolve conflict files in the sync directory.
+
+  When both local and remote versions of a file change simultaneously,
+  the sync engine saves the other version as a .conflict file. This command
+  helps you find and clean them up.
+
+  Options:
+    --clean          Remove conflict files (default: keep originals)
+    --keep-local     Keep your local version, delete conflict copies (default)
+    --keep-remote    Replace originals with the remote (conflict) version
+
+  Examples:
+    izerop conflicts                          # list all conflicts
+    izerop conflicts --clean                  # delete all .conflict files
+    izerop conflicts --clean --keep-remote    # use remote versions instead`,
+
 		"url": `izerop url <file>
 
   Get the direct asset URL for a synced file. Looks up the file in your sync
@@ -1557,6 +1672,7 @@ Commands:
   logs      View watch daemon logs (--follow, --tail N)
   push      Upload files to server
   url       Get the direct asset URL for a file
+  conflicts List and resolve conflict files
   pull      Download files from server
   ls        List remote files and directories
   rm        Delete a file or directory
