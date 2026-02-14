@@ -107,7 +107,39 @@ func main() {
 	case "mv":
 		cmdMv(cfg)
 	case "watch":
-		// Handle --stop and --start --all before full watch
+		if len(os.Args) > 2 {
+			switch os.Args[2] {
+			case "start":
+				// izerop watch start [--all]
+				for _, arg := range os.Args[3:] {
+					if arg == "--all" {
+						startAllWatchers()
+						return
+					}
+				}
+				// Single profile: treat as regular watch --daemon
+				os.Args = append(os.Args[:2], append(os.Args[3:], "--daemon")...)
+				cmdWatch(cfg)
+				return
+			case "stop":
+				// izerop watch stop [--all]
+				for _, arg := range os.Args[3:] {
+					if arg == "--all" {
+						stopAllWatchers()
+						return
+					}
+				}
+				cmdWatchStop()
+				return
+			case "status":
+				cmdWatchStatus()
+				return
+			case "help", "--help", "-h":
+				printCommandHelp("watch")
+				return
+			}
+		}
+		// Handle legacy flags
 		for _, arg := range os.Args[2:] {
 			if arg == "--stop" {
 				cmdWatchStop()
@@ -118,7 +150,6 @@ func main() {
 				return
 			}
 		}
-		// Check for --all (start all profiles)
 		for _, arg := range os.Args[2:] {
 			if arg == "--all" {
 				startAllWatchers()
@@ -1540,7 +1571,7 @@ func printCommandHelp(cmd string) {
     izerop sync --pull-only        # download only
     izerop sync ~/izerop -v        # verbose output`,
 
-		"watch": `izerop watch [<directory>] [options]
+		"watch": `izerop watch <subcommand|directory> [options]
 
   Watch a directory and sync continuously. Uses fsnotify for instant local
   change detection and periodic server polling for remote changes.
@@ -1548,30 +1579,33 @@ func printCommandHelp(cmd string) {
   Each profile runs its own independent watcher with separate PID and log files.
   You can run multiple profile watchers simultaneously.
 
-  Options:
+  Subcommands:
+    start [--all]    Start watcher daemon (all profiles with --all)
+    stop [--all]     Stop watcher daemon (all profiles with --all)
+    status           Show watcher status for all profiles
+    help             Show this help
+
+  Options (for direct watch):
     --interval N   Server poll interval in seconds (default: 30)
     -d, --daemon   Run in background (writes PID file)
     --log <path>   Log file path (default: ~/.config/izerop/profiles/<name>/watch.log)
     -v, --verbose  Log every poll tick, not just changes
-    --stop         Stop the running daemon for this profile
-    --stop --all   Stop all running profile watchers
-    --all          Start daemons for all profiles with sync dirs
-    --status       Show watcher status for all profiles
 
   Examples:
     izerop watch                          # watch current dir (foreground)
-    izerop watch ~/izerop                 # watch specific dir
-    izerop watch --interval 10            # poll every 10s
     izerop watch ~/izerop --daemon        # run in background
-    izerop watch --stop                   # stop background watcher
-    izerop watch --all                    # start all profile watchers
-    izerop watch --stop --all             # stop all profile watchers
-    izerop watch --status                 # show status of all watchers
+    izerop watch --interval 10            # poll every 10s
+
+    izerop watch start                    # start daemon for current profile
+    izerop watch start --all              # start daemons for all profiles
+    izerop watch stop                     # stop current profile watcher
+    izerop watch stop --all               # stop all watchers
+    izerop watch status                   # show all watcher statuses
 
   Multi-profile:
-    izerop --profile default watch --daemon    # start default watcher
-    izerop --profile ranger watch --daemon     # start ranger watcher
-    izerop --profile ranger watch --stop       # stop ranger only`,
+    izerop --profile default watch start       # start default watcher
+    izerop --profile ranger watch start        # start ranger watcher
+    izerop --profile ranger watch stop         # stop ranger only`,
 
 		"client": `izerop client [subcommand]
 
