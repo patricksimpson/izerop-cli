@@ -312,11 +312,23 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 				}
 			}
 
-			// File exists but size differs — check for conflict
+			// File exists on remote but content differs — check for conflict
 			if rec, tracked := e.State.Files[relPath]; tracked {
-				// Both changed if remote updated_at differs from what we last saw
+				// Remote changed if updated_at differs from what we last saw
 				if rec.RemoteTime != "" && rec.RemoteTime != remoteFile.UpdatedAt {
-					// Remote also changed — conflict
+					// Remote changed — but did LOCAL actually change?
+					localChanged := rec.Hash != "" && localHash != "" && rec.Hash != localHash
+
+					if !localChanged {
+						// Only remote changed — skip push, let next pull handle it
+						if e.Verbose {
+							fmt.Printf("  ⏭ Remote updated (local unchanged): %s\n", relPath)
+						}
+						result.Skipped++
+						return nil
+					}
+
+					// Both sides changed — genuine conflict
 					ext := filepath.Ext(path)
 					base := strings.TrimSuffix(path, ext)
 					conflictPath := fmt.Sprintf("%s.conflict%s", base, ext)
@@ -324,20 +336,39 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 						conflictPath = path + ".conflict"
 					}
 
-					// Download remote version as conflict file
-					cf, createErr := os.Create(conflictPath)
-					if createErr == nil {
-						_, dlErr := e.Client.DownloadFile(remoteFile.ID, cf)
-						cf.Close()
+					// Save local version as conflict, let remote win
+					if copyErr := copyFile(path, conflictPath); copyErr != nil {
+						result.Errors = append(result.Errors, fmt.Sprintf("conflict backup %s: %v", relPath, copyErr))
+					} else if e.Verbose {
+						fmt.Printf("  ⚠ Conflict: %s (local saved as %s)\n", relPath, filepath.Base(conflictPath))
+					}
+
+					// Download remote version as the winner
+					tmpPath := path + ".izerop-tmp"
+					f, dlErr := os.Create(tmpPath)
+					if dlErr == nil {
+						_, dlErr = e.Client.DownloadFile(remoteFile.ID, f)
+						f.Close()
 						if dlErr != nil {
-							os.Remove(conflictPath)
+							os.Remove(tmpPath)
 							result.Errors = append(result.Errors, fmt.Sprintf("conflict download %s: %v", relPath, dlErr))
-						} else if e.Verbose {
-							fmt.Printf("  ⚠ Conflict: %s (remote saved as %s)\n", relPath, filepath.Base(conflictPath))
+						} else {
+							os.Rename(tmpPath, path)
+							if newInfo, err := os.Stat(path); err == nil {
+								h, _ := HashFile(path)
+								e.State.Files[relPath] = FileRecord{
+									RemoteID:   remoteFile.ID,
+									Size:       newInfo.Size(),
+									Hash:       h,
+									RemoteTime: remoteFile.UpdatedAt,
+									LocalMod:   newInfo.ModTime().Unix(),
+								}
+							}
 						}
 					}
+
 					result.Conflicts++
-					// Still push local version as the winner
+					return nil
 				}
 			}
 
