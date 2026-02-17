@@ -614,21 +614,31 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 				// File was previously synced — check if local modified it
 				localModTime := info.ModTime().Unix()
 				if localModTime != rec.LocalMod || info.Size() != rec.Size {
-					// Local changed too — conflict!
-					ext := filepath.Ext(localPath)
-					base := strings.TrimSuffix(localPath, ext)
-					conflictPath := fmt.Sprintf("%s.conflict%s", base, ext)
-					if ext == "" {
-						conflictPath = localPath + ".conflict"
-					}
+					// Local changed — but check if remote content actually differs
+					// If content_hash matches local hash, it's not a real conflict
+					localHash, hashErr := HashFile(localPath)
+					if hashErr == nil && change.ContentHash != "" && localHash == change.ContentHash {
+						// Content is identical — no real conflict, just timestamp drift
+						if e.Verbose {
+							fmt.Printf("  ✓ Hash match (no conflict): %s\n", localRel)
+						}
+					} else {
+						// Genuine conflict — local and remote have different content
+						ext := filepath.Ext(localPath)
+						base := strings.TrimSuffix(localPath, ext)
+						conflictPath := fmt.Sprintf("%s.conflict%s", base, ext)
+						if ext == "" {
+							conflictPath = localPath + ".conflict"
+						}
 
-					// Copy current local to conflict file
-					if copyErr := copyFile(localPath, conflictPath); copyErr != nil {
-						result.Errors = append(result.Errors, fmt.Sprintf("conflict backup %s: %v", localRel, copyErr))
-					} else if e.Verbose {
-						fmt.Printf("  ⚠ Conflict: %s (local saved as %s)\n", localRel, filepath.Base(conflictPath))
+						// Copy current local to conflict file
+						if copyErr := copyFile(localPath, conflictPath); copyErr != nil {
+							result.Errors = append(result.Errors, fmt.Sprintf("conflict backup %s: %v", localRel, copyErr))
+						} else if e.Verbose {
+							fmt.Printf("  ⚠ Conflict: %s (local saved as %s)\n", localRel, filepath.Base(conflictPath))
+						}
+						result.Conflicts++
 					}
-					result.Conflicts++
 				}
 			}
 		}
