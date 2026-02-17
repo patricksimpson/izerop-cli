@@ -181,6 +181,62 @@ func (c *Client) ListDirectories() ([]Directory, error) {
 	return wrapper.Directories, nil
 }
 
+// ManifestEntry represents a file in the server manifest.
+type ManifestEntry struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	DirectoryID string `json:"directory_id"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type"`
+	ContentHash string `json:"content_hash"`
+	HasText     bool   `json:"has_text"`
+	HasBinary   bool   `json:"has_binary"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// ManifestDir represents a directory in the server manifest.
+type ManifestDir struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	ParentID  string `json:"parent_id"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// ManifestResponse is the response from /api/v1/sync/manifest.
+type ManifestResponse struct {
+	Files       []ManifestEntry `json:"files"`
+	Directories []ManifestDir   `json:"directories"`
+	GeneratedAt string          `json:"generated_at"`
+}
+
+// GetManifest fetches the full file/directory manifest from the server.
+func (c *Client) GetManifest(root string) (*ManifestResponse, error) {
+	path := "/api/v1/sync/manifest"
+	if root != "" {
+		path = fmt.Sprintf("%s?root=%s", path, root)
+	}
+
+	resp, err := c.do("GET", path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("manifest failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result ManifestResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("could not decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // Change represents a single change from the sync/changes API.
 type Change struct {
 	Type        string `json:"type"`

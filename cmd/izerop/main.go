@@ -90,6 +90,8 @@ func main() {
 		cmdStatus(cfg)
 	case "sync":
 		cmdSync(cfg)
+	case "reconcile":
+		cmdReconcile(cfg)
 	case "push":
 		cmdPush(cfg)
 	case "url":
@@ -364,6 +366,81 @@ func cmdSync(cfg *config.Config) {
 	}
 
 	fmt.Println("✅ Sync complete")
+}
+
+func cmdReconcile(cfg *config.Config) {
+	// Usage: izerop reconcile [<directory>] [--dry-run] [--verbose]
+	syncDir := cfg.SyncDir
+	dryRun := false
+	verbose := false
+
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--dry-run", "-n":
+			dryRun = true
+		case "--verbose", "-v":
+			verbose = true
+		default:
+			if !strings.HasPrefix(os.Args[i], "--") {
+				syncDir = os.Args[i]
+			}
+		}
+	}
+
+	if syncDir == "" {
+		syncDir = "."
+	}
+
+	absDir, err := filepath.Abs(syncDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid directory: %v\n", err)
+		os.Exit(1)
+	}
+	syncDir = absDir
+
+	info, err := os.Stat(syncDir)
+	if err != nil || !info.IsDir() {
+		fmt.Fprintf(os.Stderr, "Not a directory: %s\n", syncDir)
+		os.Exit(1)
+	}
+
+	client := newClient(cfg)
+	sync.MigrateState(activeProfile, syncDir)
+	state, _ := sync.LoadState(activeProfile)
+
+	engine := sync.NewEngine(client, syncDir, state)
+	engine.Verbose = verbose
+
+	if dryRun {
+		fmt.Printf("Reconcile (dry run): %s ↔ %s\n", syncDir, cfg.ServerURL)
+	} else {
+		fmt.Printf("Reconciling: %s ↔ %s\n", syncDir, cfg.ServerURL)
+	}
+
+	fmt.Println("📋 Fetching server manifest...")
+	result, err := engine.Reconcile(dryRun)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Reconcile error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\n  Downloaded: %d\n  Uploaded:   %d\n  Deleted:    %d\n  Conflicts:  %d\n  Skipped:    %d\n",
+		result.Downloaded, result.Uploaded, result.Deleted, result.Conflicts, result.Skipped)
+	for _, e := range result.Errors {
+		fmt.Fprintf(os.Stderr, "  ⚠ %s\n", e)
+	}
+
+	if !dryRun {
+		if err := sync.SaveState(activeProfile, state); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not save state: %v\n", err)
+		}
+	}
+
+	if dryRun {
+		fmt.Println("\n🔍 Dry run complete (no changes made)")
+	} else {
+		fmt.Println("\n✅ Reconcile complete")
+	}
 }
 
 func cmdPush(cfg *config.Config) {
@@ -1663,6 +1740,27 @@ func printCommandHelp(cmd string) {
     izerop logs --tail 100        # last 100 lines
     izerop logs --follow          # tail -f style`,
 
+		"reconcile": `izerop reconcile [<directory>] [options]
+
+  Full reconciliation using the server manifest as source of truth.
+  Compares every remote file against local files and resolves differences.
+
+  - Remote files missing locally → download
+  - Local files missing on remote (and previously tracked) → delete locally
+  - Local files not on remote (untracked) → upload
+  - Hash mismatch → server wins (local saved as .conflict if modified)
+
+  Use --dry-run to preview changes without modifying anything.
+
+  Options:
+    -n, --dry-run  Preview what would change without doing it
+    -v, --verbose  Show detailed output
+
+  Examples:
+    izerop reconcile                   # full reconcile of sync dir
+    izerop reconcile --dry-run         # preview only
+    izerop reconcile ~/izerop -v       # verbose, specific dir`,
+
 		"push": `izerop push <file> [options]
 
   Upload a file to the server.
@@ -1792,6 +1890,7 @@ Commands:
   login     Authenticate with izerop server
   status    Show connection and sync status
   sync      Sync local directory with server
+  reconcile Full reconcile using server manifest (recovery/verification)
   watch     Watch and sync (fsnotify + polling, --daemon for background)
   logs      View watch daemon logs (--follow, --tail N)
   push      Upload files to server

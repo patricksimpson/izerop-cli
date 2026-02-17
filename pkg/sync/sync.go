@@ -484,6 +484,298 @@ func (e *Engine) PushSync() (*SyncResult, error) {
 	return result, nil
 }
 
+// Reconcile performs a full reconciliation using the server manifest as source of truth.
+// It compares every remote file against local state and vice versa.
+func (e *Engine) Reconcile(dryRun bool) (*SyncResult, error) {
+	result := &SyncResult{}
+
+	manifest, err := e.Client.GetManifest(e.RootDir)
+	if err != nil {
+		return nil, fmt.Errorf("could not fetch manifest: %w", err)
+	}
+
+	// Ensure root directory structure exists locally
+	_, _, err = e.initRootDir()
+	if err != nil {
+		return nil, fmt.Errorf("could not init root dir: %w", err)
+	}
+
+	// Build remote file index by relative path
+	remoteByPath := make(map[string]api.ManifestEntry)
+	rootPrefix := "/" + e.RootDir
+	for _, f := range manifest.Files {
+		relPath := f.Path
+		if strings.HasPrefix(relPath, rootPrefix+"/") {
+			relPath = relPath[len(rootPrefix)+1:]
+		}
+		// Notes (no extension on server) get .txt locally
+		if filepath.Ext(relPath) == "" {
+			relPath = relPath + ".txt"
+		}
+		remoteByPath[relPath] = f
+	}
+
+	// Ensure remote directories exist locally
+	for _, d := range manifest.Directories {
+		relPath := d.Path
+		if strings.HasPrefix(relPath, rootPrefix+"/") {
+			relPath = relPath[len(rootPrefix)+1:]
+		} else if relPath == rootPrefix {
+			continue
+		}
+		if relPath == "" {
+			continue
+		}
+		localDir := filepath.Join(e.SyncDir, relPath)
+		if !dryRun {
+			os.MkdirAll(localDir, 0755)
+		}
+	}
+
+	// Phase 1: Check remote files against local
+	for relPath, remote := range remoteByPath {
+		if e.Ignore != nil && e.Ignore.IsIgnored(relPath, false) {
+			continue
+		}
+
+		localPath := filepath.Join(e.SyncDir, relPath)
+		_, statErr := os.Stat(localPath)
+
+		if os.IsNotExist(statErr) {
+			// Remote exists, local missing → download
+			if e.Verbose || dryRun {
+				fmt.Printf("  ⬇ Missing locally: %s\n", relPath)
+			}
+			if !dryRun {
+				os.MkdirAll(filepath.Dir(localPath), 0755)
+				tmpPath := localPath + ".izerop-tmp"
+				f, err := os.Create(tmpPath)
+				if err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("create %s: %v", relPath, err))
+					continue
+				}
+				_, err = e.Client.DownloadFile(remote.ID, f)
+				f.Close()
+				if err != nil {
+					os.Remove(tmpPath)
+					result.Errors = append(result.Errors, fmt.Sprintf("download %s: %v", relPath, err))
+					continue
+				}
+				if err := os.Rename(tmpPath, localPath); err != nil {
+					os.Remove(tmpPath)
+					result.Errors = append(result.Errors, fmt.Sprintf("rename %s: %v", relPath, err))
+					continue
+				}
+
+				// Track in state
+				if newInfo, err := os.Stat(localPath); err == nil {
+					hash, _ := HashFile(localPath)
+					e.State.Files[relPath] = FileRecord{
+						RemoteID:   remote.ID,
+						Size:       newInfo.Size(),
+						Hash:       hash,
+						RemoteTime: remote.UpdatedAt,
+						LocalMod:   newInfo.ModTime().Unix(),
+					}
+				}
+				if filepath.Ext(remote.Path) == "" {
+					e.State.Notes[relPath] = remote.ID
+				}
+			}
+			result.Downloaded++
+			continue
+		}
+
+		if statErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("stat %s: %v", relPath, statErr))
+			continue
+		}
+
+		// Both exist — compare hashes
+		localHash, hashErr := HashFile(localPath)
+		if hashErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("hash %s: %v", relPath, hashErr))
+			continue
+		}
+
+		if remote.ContentHash != "" && localHash == remote.ContentHash {
+			// Identical — update state and skip
+			info, _ := os.Stat(localPath)
+			e.State.Files[relPath] = FileRecord{
+				RemoteID:   remote.ID,
+				Size:       info.Size(),
+				Hash:       localHash,
+				RemoteTime: remote.UpdatedAt,
+				LocalMod:   info.ModTime().Unix(),
+			}
+			result.Skipped++
+			continue
+		}
+
+		// Hash differs — server wins, save local as conflict if modified since last sync
+		if rec, tracked := e.State.Files[relPath]; tracked && rec.Hash != "" && rec.Hash != localHash {
+			// Local was modified — save as conflict
+			ext := filepath.Ext(localPath)
+			base := strings.TrimSuffix(localPath, ext)
+			conflictPath := fmt.Sprintf("%s.conflict%s", base, ext)
+			if ext == "" {
+				conflictPath = localPath + ".conflict"
+			}
+
+			if e.Verbose || dryRun {
+				fmt.Printf("  ⚠ Conflict (server wins): %s\n", relPath)
+			}
+			if !dryRun {
+				copyFile(localPath, conflictPath)
+			}
+			result.Conflicts++
+		} else if e.Verbose || dryRun {
+			fmt.Printf("  ⬇ Stale locally: %s\n", relPath)
+		}
+
+		// Download server version
+		if !dryRun {
+			tmpPath := localPath + ".izerop-tmp"
+			f, err := os.Create(tmpPath)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("create %s: %v", relPath, err))
+				continue
+			}
+			_, err = e.Client.DownloadFile(remote.ID, f)
+			f.Close()
+			if err != nil {
+				os.Remove(tmpPath)
+				result.Errors = append(result.Errors, fmt.Sprintf("download %s: %v", relPath, err))
+				continue
+			}
+			if err := os.Rename(tmpPath, localPath); err != nil {
+				os.Remove(tmpPath)
+				result.Errors = append(result.Errors, fmt.Sprintf("rename %s: %v", relPath, err))
+				continue
+			}
+
+			if newInfo, err := os.Stat(localPath); err == nil {
+				hash, _ := HashFile(localPath)
+				e.State.Files[relPath] = FileRecord{
+					RemoteID:   remote.ID,
+					Size:       newInfo.Size(),
+					Hash:       hash,
+					RemoteTime: remote.UpdatedAt,
+					LocalMod:   newInfo.ModTime().Unix(),
+				}
+			}
+		}
+		result.Downloaded++
+	}
+
+	// Phase 2: Check local files not on remote → upload
+	filepath.Walk(e.SyncDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if strings.HasPrefix(info.Name(), ".") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if strings.Contains(info.Name(), ".conflict") || strings.HasSuffix(info.Name(), ".izerop-tmp") {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(e.SyncDir, path)
+		if e.Ignore != nil && e.Ignore.IsIgnored(relPath, false) {
+			return nil
+		}
+
+		if _, onRemote := remoteByPath[relPath]; onRemote {
+			return nil // already handled in phase 1
+		}
+
+		// Local file not on remote
+		if rec, tracked := e.State.Files[relPath]; tracked && rec.RemoteID != "" {
+			// Was tracked — deleted on server → delete locally
+			if e.Verbose || dryRun {
+				fmt.Printf("  🗑 Deleted on server: %s\n", relPath)
+			}
+			if !dryRun {
+				os.Remove(path)
+				delete(e.State.Files, relPath)
+				delete(e.State.Notes, relPath)
+			}
+			result.Deleted++
+		} else {
+			// New local file — upload to server
+			if e.Verbose || dryRun {
+				fmt.Printf("  ⬆ New local file: %s\n", relPath)
+			}
+			if !dryRun {
+				// Find or create parent directory
+				remoteDirPath := filepath.ToSlash(filepath.Dir(e.localToRemote(relPath)))
+				_, remoteDirsByPath, _ := e.initRootDir()
+				dirID := ""
+				if dir, ok := remoteDirsByPath[remoteDirPath]; ok {
+					dirID = dir.ID
+				}
+
+				if dirID != "" {
+					if isTextFile(path, info) {
+						contents, err := os.ReadFile(path)
+						if err == nil {
+							created, err := e.Client.CreateTextFile(info.Name(), string(contents), dirID, "")
+							if err != nil {
+								result.Errors = append(result.Errors, fmt.Sprintf("upload text %s: %v", relPath, err))
+							} else {
+								h, _ := HashFile(path)
+								rid := ""
+								if created != nil {
+									rid = created.ID
+								}
+								e.State.Files[relPath] = FileRecord{
+									RemoteID: rid,
+									Size:     info.Size(),
+									Hash:     h,
+									LocalMod: info.ModTime().Unix(),
+								}
+								result.Uploaded++
+							}
+						}
+					} else {
+						uploaded, err := e.Client.UploadFile(path, dirID, info.Name())
+						if err != nil {
+							result.Errors = append(result.Errors, fmt.Sprintf("upload %s: %v", relPath, err))
+						} else {
+							h, _ := HashFile(path)
+							rid := ""
+							if uploaded != nil {
+								rid = uploaded.ID
+							}
+							e.State.Files[relPath] = FileRecord{
+								RemoteID: rid,
+								Size:     info.Size(),
+								Hash:     h,
+								LocalMod: info.ModTime().Unix(),
+							}
+							result.Uploaded++
+						}
+					}
+				} else {
+					result.Errors = append(result.Errors, fmt.Sprintf("no remote dir for %s", relPath))
+				}
+			} else {
+				result.Uploaded++
+			}
+		}
+
+		return nil
+	})
+
+	return result, nil
+}
+
 // isTextFile determines if a file should be treated as a text file.
 // Files without extensions or with known text extensions are text files.
 func isTextFile(path string, info os.FileInfo) bool {
