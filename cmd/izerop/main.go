@@ -587,14 +587,22 @@ func cmdConflicts(cfg *config.Config) {
 }
 
 func cmdURL(cfg *config.Config) {
-	// Usage: izerop url <file>
+	// Usage: izerop url <file> [--direct]
 	// Resolves a local file path to its remote URL via the sync state or by searching remote files.
 	if len(os.Args) < 3 {
 		fmt.Fprintf(os.Stderr, "Usage: izerop url <file>\n")
 		os.Exit(1)
 	}
 
-	filePath := os.Args[2]
+	direct := false
+	filePath := ""
+	for _, arg := range os.Args[2:] {
+		if arg == "--direct" {
+			direct = true
+		} else if filePath == "" {
+			filePath = arg
+		}
+	}
 
 	// Resolve to absolute path
 	absPath, err := filepath.Abs(filePath)
@@ -616,9 +624,15 @@ func cmdURL(cfg *config.Config) {
 			// Check Files state
 			if rec, ok := state.Files[relPath]; ok && rec.RemoteID != "" {
 				file, err := client.GetFile(rec.RemoteID)
-				if err == nil && file.URL != "" {
-					fmt.Println(file.URL)
-					return
+				if err == nil {
+					if !direct && file.StableURL != "" {
+						fmt.Println(file.StableURL)
+						return
+					}
+					if file.URL != "" {
+						fmt.Println(file.URL)
+						return
+					}
 				}
 				// If URL not available, fall through to show the download endpoint
 				if err == nil {
@@ -630,9 +644,15 @@ func cmdURL(cfg *config.Config) {
 			// Check Notes state
 			if noteID, ok := state.Notes[relPath]; ok {
 				file, err := client.GetFile(noteID)
-				if err == nil && file.URL != "" {
-					fmt.Println(file.URL)
-					return
+				if err == nil {
+					if !direct && file.StableURL != "" {
+						fmt.Println(file.StableURL)
+						return
+					}
+					if file.URL != "" {
+						fmt.Println(file.URL)
+						return
+					}
 				}
 				if err == nil {
 					fmt.Printf("%s/api/v1/files/%s/download\n", cfg.ServerURL, noteID)
@@ -657,7 +677,9 @@ func cmdURL(cfg *config.Config) {
 		}
 		for _, f := range files {
 			if f.Name == fileName {
-				if f.URL != "" {
+				if !direct && f.StableURL != "" {
+					fmt.Println(f.StableURL)
+				} else if f.URL != "" {
 					fmt.Println(f.URL)
 				} else {
 					fmt.Printf("%s/api/v1/files/%s/download\n", cfg.ServerURL, f.ID)
@@ -1791,16 +1813,17 @@ func printCommandHelp(cmd string) {
     izerop conflicts --clean                  # delete all .conflict files
     izerop conflicts --clean --keep-remote    # use remote versions instead`,
 
-		"url": `izerop url <file>
+		"url": `izerop url <file> [--direct]
 
-  Get the direct asset URL for a synced file. Looks up the file in your sync
-  state first (fast), then falls back to searching by filename on the server.
+  Get the stable URL for a synced file. Returns a permanent redirect URL
+  that stays the same even when the file is re-uploaded.
 
-  Output is just the URL — pipe-friendly for scripts.
+  Options:
+    --direct    Get the raw asset URL instead of the stable redirect
 
   Examples:
-    izerop url photo.jpg                      # from current directory
-    izerop url ~/izerop/docs/readme.md        # absolute path
+    izerop url photo.jpg                      # stable redirect URL
+    izerop url photo.jpg --direct             # raw asset URL
     izerop push photo.jpg && izerop url photo.jpg   # push then get URL`,
 
 		"pull": `izerop pull <file-id> [options]

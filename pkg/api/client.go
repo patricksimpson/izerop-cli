@@ -90,6 +90,7 @@ type FileEntry struct {
 	ContentType string `json:"content_type"`
 	ContentHash string `json:"content_hash,omitempty"`
 	URL         string `json:"url,omitempty"`
+	StableURL   string `json:"stable_url,omitempty"`
 	Public      bool   `json:"public"`
 	HasBinary   bool   `json:"has_binary"`
 	HasText     bool   `json:"has_text"`
