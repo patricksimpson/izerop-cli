@@ -18,6 +18,7 @@ import (
 	"github.com/patricksimpson/izerop-cli/pkg/api"
 	"github.com/patricksimpson/izerop-cli/pkg/config"
 	"github.com/patricksimpson/izerop-cli/pkg/sync"
+	"github.com/patricksimpson/izerop-cli/pkg/sync2"
 	"github.com/patricksimpson/izerop-cli/pkg/updater"
 	"github.com/patricksimpson/izerop-cli/pkg/watcher"
 )
@@ -240,8 +241,18 @@ func cmdStatus(cfg *config.Config) {
 
 		// Local state
 		if pcfg.SyncDir != "" {
-			state, _ := sync.LoadState(name)
-			fmt.Printf("Tracked: %d files, %d notes\n", len(state.Files), len(state.Notes))
+			// Try v2 state first
+			v2state, _ := sync2.LoadState(name)
+			if len(v2state.Files) > 0 {
+				fmt.Printf("Tracked: %d files (sync v2)\n", len(v2state.Files))
+				conflicts, _ := sync2.LoadConflicts(name)
+				if unresolved := conflicts.Unresolved(); len(unresolved) > 0 {
+					fmt.Printf("Conflicts: %d unresolved\n", len(unresolved))
+				}
+			} else {
+				state, _ := sync.LoadState(name)
+				fmt.Printf("Tracked: %d files, %d notes (sync v1)\n", len(state.Files), len(state.Notes))
+			}
 		}
 	}
 }
@@ -273,11 +284,12 @@ func getWatcherStatusForProfile(profile string) (bool, int) {
 }
 
 func cmdSync(cfg *config.Config) {
-	// Usage: izerop sync [<directory>] [--push-only] [--pull-only] [--verbose]
+	// Usage: izerop sync [<directory>] [--push-only] [--pull-only] [--verbose] [--legacy]
 	syncDir := cfg.SyncDir
 	pushOnly := false
 	pullOnly := false
 	verbose := false
+	legacy := false
 
 	for i := 2; i < len(os.Args); i++ {
 		switch os.Args[i] {
@@ -287,6 +299,8 @@ func cmdSync(cfg *config.Config) {
 			pullOnly = true
 		case "--verbose", "-v":
 			verbose = true
+		case "--legacy":
+			legacy = true
 		default:
 			if !strings.HasPrefix(os.Args[i], "--") {
 				syncDir = os.Args[i]
@@ -298,7 +312,6 @@ func cmdSync(cfg *config.Config) {
 		syncDir = "."
 	}
 
-	// Resolve to absolute path
 	absDir, err := filepath.Abs(syncDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid directory: %v\n", err)
@@ -306,7 +319,6 @@ func cmdSync(cfg *config.Config) {
 	}
 	syncDir = absDir
 
-	// Verify directory exists
 	info, err := os.Stat(syncDir)
 	if err != nil || !info.IsDir() {
 		fmt.Fprintf(os.Stderr, "Not a directory: %s\n", syncDir)
@@ -314,22 +326,82 @@ func cmdSync(cfg *config.Config) {
 	}
 
 	client := newClient(cfg)
+	client.RegisterClient(cfg.EnsureClientKey(activeProfile), cfg.ClientName, config.Platform(), version)
 
-	// Migrate legacy state file if needed
+	if legacy {
+		cmdSyncLegacy(cfg, client, syncDir, pushOnly, pullOnly, verbose)
+		return
+	}
+
+	// v2 sync engine
+	fmt.Printf("Syncing: %s ↔ %s\n", syncDir, cfg.ServerURL)
+
+	// Auto-migrate v1 state if needed
+	if _, migrated, err := sync2.MigrateIfNeeded(activeProfile); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: state migration failed: %v\n", err)
+	} else if migrated {
+		fmt.Println("📦 Migrated sync state v1 → v2")
+	}
+
+	engine := sync2.NewEngine(client, syncDir, activeProfile)
+	engine.Verbose = verbose
+
+	if pushOnly {
+		fmt.Println("⬆ Pushing local changes...")
+		result, err := engine.SyncPush()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Push error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("  Pushed: %d, Deleted: %d, Conflicts: %d, Skipped: %d\n",
+			result.Pushed, result.Deleted, result.Conflicts, result.Skipped)
+		for _, e := range result.Errors {
+			fmt.Fprintf(os.Stderr, "  ⚠ %s\n", e)
+		}
+	} else if pullOnly {
+		fmt.Println("⬇ Pulling remote changes...")
+		result, err := engine.SyncPull()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Pull error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("  Pulled: %d, Deleted: %d, Conflicts: %d, Skipped: %d\n",
+			result.Pulled, result.Deleted, result.Conflicts, result.Skipped)
+		for _, e := range result.Errors {
+			fmt.Fprintf(os.Stderr, "  ⚠ %s\n", e)
+		}
+	} else {
+		fmt.Println("🔄 Running three-way sync...")
+		result, err := engine.Sync()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Sync error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("  Pushed: %d, Pulled: %d, Deleted: %d, Conflicts: %d, Skipped: %d\n",
+			result.Pushed, result.Pulled, result.Deleted, result.Conflicts, result.Skipped)
+		for _, e := range result.Errors {
+			fmt.Fprintf(os.Stderr, "  ⚠ %s\n", e)
+		}
+	}
+
+	// Show conflict count if any
+	conflicts, _ := sync2.LoadConflicts(activeProfile)
+	if unresolved := conflicts.Unresolved(); len(unresolved) > 0 {
+		fmt.Printf("\n⚠ %d unresolved conflict(s) — run 'izerop conflicts' to resolve\n", len(unresolved))
+	}
+
+	fmt.Println("✅ Sync complete")
+}
+
+// cmdSyncLegacy runs the v1 sync engine (for --legacy flag).
+func cmdSyncLegacy(cfg *config.Config, client *api.Client, syncDir string, pushOnly, pullOnly, verbose bool) {
 	sync.MigrateState(activeProfile, syncDir)
-
-	// Load sync state
 	state, _ := sync.LoadState(activeProfile)
-
 	engine := sync.NewEngine(client, syncDir, state)
 	engine.Verbose = verbose
 
-	// Register/update client with server
-	client.RegisterClient(cfg.EnsureClientKey(activeProfile), cfg.ClientName, config.Platform(), version)
+	fmt.Printf("Syncing (legacy): %s ↔ %s\n", syncDir, cfg.ServerURL)
 
-	fmt.Printf("Syncing: %s ↔ %s\n", syncDir, cfg.ServerURL)
-
-	// Pull remote changes
 	if !pushOnly {
 		fmt.Println("⬇ Pulling remote changes...")
 		pullResult, newCursor, err := engine.PullSync(state.Cursor)
@@ -345,7 +417,6 @@ func cmdSync(cfg *config.Config) {
 		}
 	}
 
-	// Push local changes
 	if !pullOnly {
 		fmt.Println("⬆ Pushing local changes...")
 		pushResult, err := engine.PushSync()
@@ -360,26 +431,24 @@ func cmdSync(cfg *config.Config) {
 		}
 	}
 
-	// Save state
 	if err := sync.SaveState(activeProfile, state); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not save sync state: %v\n", err)
 	}
-
-	fmt.Println("✅ Sync complete")
+	fmt.Println("✅ Sync complete (legacy)")
 }
 
 func cmdReconcile(cfg *config.Config) {
-	// Usage: izerop reconcile [<directory>] [--dry-run] [--verbose]
+	// Usage: izerop reconcile [<directory>] [--verbose] [--legacy]
 	syncDir := cfg.SyncDir
-	dryRun := false
 	verbose := false
+	legacy := false
 
 	for i := 2; i < len(os.Args); i++ {
 		switch os.Args[i] {
-		case "--dry-run", "-n":
-			dryRun = true
 		case "--verbose", "-v":
 			verbose = true
+		case "--legacy":
+			legacy = true
 		default:
 			if !strings.HasPrefix(os.Args[i], "--") {
 				syncDir = os.Args[i]
@@ -405,42 +474,64 @@ func cmdReconcile(cfg *config.Config) {
 	}
 
 	client := newClient(cfg)
-	sync.MigrateState(activeProfile, syncDir)
-	state, _ := sync.LoadState(activeProfile)
 
-	engine := sync.NewEngine(client, syncDir, state)
-	engine.Verbose = verbose
+	if legacy {
+		// v1 reconcile
+		sync.MigrateState(activeProfile, syncDir)
+		state, _ := sync.LoadState(activeProfile)
+		engine := sync.NewEngine(client, syncDir, state)
+		engine.Verbose = verbose
 
-	if dryRun {
-		fmt.Printf("Reconcile (dry run): %s ↔ %s\n", syncDir, cfg.ServerURL)
-	} else {
-		fmt.Printf("Reconciling: %s ↔ %s\n", syncDir, cfg.ServerURL)
+		fmt.Printf("Reconciling (legacy): %s ↔ %s\n", syncDir, cfg.ServerURL)
+		fmt.Println("📋 Fetching server manifest...")
+		result, err := engine.Reconcile(false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Reconcile error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\n  Downloaded: %d\n  Uploaded:   %d\n  Deleted:    %d\n  Conflicts:  %d\n  Skipped:    %d\n",
+			result.Downloaded, result.Uploaded, result.Deleted, result.Conflicts, result.Skipped)
+		for _, e := range result.Errors {
+			fmt.Fprintf(os.Stderr, "  ⚠ %s\n", e)
+		}
+		if err := sync.SaveState(activeProfile, state); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not save state: %v\n", err)
+		}
+		fmt.Println("\n✅ Reconcile complete (legacy)")
+		return
 	}
 
+	// v2 reconcile — uses full manifest three-way sync
+	fmt.Printf("Reconciling: %s ↔ %s\n", syncDir, cfg.ServerURL)
+
+	if _, migrated, err := sync2.MigrateIfNeeded(activeProfile); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: state migration failed: %v\n", err)
+	} else if migrated {
+		fmt.Println("📦 Migrated sync state v1 → v2")
+	}
+
+	engine := sync2.NewEngine(client, syncDir, activeProfile)
+	engine.Verbose = verbose
+
 	fmt.Println("📋 Fetching server manifest...")
-	result, err := engine.Reconcile(dryRun)
+	result, err := engine.Sync()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Reconcile error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n  Downloaded: %d\n  Uploaded:   %d\n  Deleted:    %d\n  Conflicts:  %d\n  Skipped:    %d\n",
-		result.Downloaded, result.Uploaded, result.Deleted, result.Conflicts, result.Skipped)
+	fmt.Printf("\n  Pushed:    %d\n  Pulled:    %d\n  Deleted:   %d\n  Conflicts: %d\n  Skipped:   %d\n",
+		result.Pushed, result.Pulled, result.Deleted, result.Conflicts, result.Skipped)
 	for _, e := range result.Errors {
 		fmt.Fprintf(os.Stderr, "  ⚠ %s\n", e)
 	}
 
-	if !dryRun {
-		if err := sync.SaveState(activeProfile, state); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not save state: %v\n", err)
-		}
+	conflicts, _ := sync2.LoadConflicts(activeProfile)
+	if unresolved := conflicts.Unresolved(); len(unresolved) > 0 {
+		fmt.Printf("\n⚠ %d unresolved conflict(s) — run 'izerop conflicts' to resolve\n", len(unresolved))
 	}
 
-	if dryRun {
-		fmt.Println("\n🔍 Dry run complete (no changes made)")
-	} else {
-		fmt.Println("\n✅ Reconcile complete")
-	}
+	fmt.Println("\n✅ Reconcile complete")
 }
 
 func cmdPush(cfg *config.Config) {
@@ -492,98 +583,119 @@ func cmdPush(cfg *config.Config) {
 }
 
 func cmdConflicts(cfg *config.Config) {
-	// Usage: izerop conflicts [--clean] [--keep-local|--keep-remote]
+	// Usage: izerop conflicts [--resolve-all --keep local|remote] [--resolve <path> --keep local|remote]
+	keepSide := ""  // "local" or "remote"
+	resolveAll := false
+	resolvePath := ""
+
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--resolve-all":
+			resolveAll = true
+		case "--resolve":
+			if i+1 < len(os.Args) {
+				resolvePath = os.Args[i+1]
+				i++
+			}
+		case "--keep":
+			if i+1 < len(os.Args) {
+				keepSide = os.Args[i+1]
+				i++
+			}
+		// Legacy flags — map to new behavior
+		case "--clean":
+			resolveAll = true
+		case "--keep-local":
+			keepSide = "local"
+		case "--keep-remote":
+			keepSide = "remote"
+		}
+	}
+
+	conflicts, _ := sync2.LoadConflicts(activeProfile)
+	unresolved := conflicts.Unresolved()
+
+	if len(unresolved) == 0 {
+		fmt.Println("No conflicts. ✅")
+		return
+	}
+
+	// List conflicts
+	fmt.Printf("Found %d conflict(s):\n\n", len(unresolved))
+	for _, c := range unresolved {
+		localLabel := c.LocalHash
+		if len(localLabel) > 8 {
+			localLabel = localLabel[:8]
+		}
+		remoteLabel := c.RemoteHash
+		if remoteLabel == "" {
+			remoteLabel = "(deleted)"
+		} else if len(remoteLabel) > 8 {
+			remoteLabel = remoteLabel[:8]
+		}
+		fmt.Printf("  ⚠ %s\n    local: %s  remote: %s  detected: %s\n",
+			c.Path, localLabel, remoteLabel, c.DetectedAt.Format("2006-01-02 15:04"))
+	}
+
+	if !resolveAll && resolvePath == "" {
+		fmt.Println("\nTo resolve:")
+		fmt.Println("  izerop conflicts --resolve <path> --keep local    # keep your version")
+		fmt.Println("  izerop conflicts --resolve <path> --keep remote   # keep server version")
+		fmt.Println("  izerop conflicts --resolve-all --keep local       # keep all local versions")
+		fmt.Println("  izerop conflicts --resolve-all --keep remote      # keep all remote versions")
+		return
+	}
+
+	if keepSide != "local" && keepSide != "remote" {
+		fmt.Fprintf(os.Stderr, "Specify --keep local or --keep remote\n")
+		os.Exit(1)
+	}
+
+	client := newClient(cfg)
 	syncDir := cfg.SyncDir
 	if syncDir == "" {
 		syncDir = "."
 	}
-	absDir, err := filepath.Abs(syncDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Invalid directory: %v\n", err)
-		os.Exit(1)
-	}
+	absDir, _ := filepath.Abs(syncDir)
+	engine := sync2.NewEngine(client, absDir, activeProfile)
 
-	clean := false
-	keepLocal := false
-	keepRemote := false
+	keepLocal := keepSide == "local"
+	resolved := 0
 
-	for i := 2; i < len(os.Args); i++ {
-		switch os.Args[i] {
-		case "--clean":
-			clean = true
-		case "--keep-local":
-			keepLocal = true
-		case "--keep-remote":
-			keepRemote = true
-		default:
-			if !strings.HasPrefix(os.Args[i], "--") {
-				absDir, _ = filepath.Abs(os.Args[i])
+	toResolve := unresolved
+	if resolvePath != "" {
+		toResolve = nil
+		for _, c := range unresolved {
+			if c.Path == resolvePath {
+				toResolve = append(toResolve, c)
+				break
 			}
 		}
-	}
-
-	// Find all conflict files
-	var conflicts []string
-	filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if strings.HasPrefix(info.Name(), ".") && info.IsDir() {
-			return filepath.SkipDir
-		}
-		if strings.Contains(info.Name(), ".conflict") {
-			rel, _ := filepath.Rel(absDir, path)
-			conflicts = append(conflicts, rel)
-		}
-		return nil
-	})
-
-	if len(conflicts) == 0 {
-		fmt.Println("No conflict files found. ✅")
-		return
-	}
-
-	fmt.Printf("Found %d conflict file(s):\n\n", len(conflicts))
-	for _, c := range conflicts {
-		// Figure out the original file name
-		original := strings.Replace(c, ".conflict", "", 1)
-		fmt.Printf("  ⚠ %s\n    original: %s\n", c, original)
-	}
-
-	if !clean {
-		fmt.Println("\nTo resolve:")
-		fmt.Println("  izerop conflicts --clean              # delete all conflict files (keep originals)")
-		fmt.Println("  izerop conflicts --clean --keep-local  # keep local version, delete conflict copies")
-		fmt.Println("  izerop conflicts --clean --keep-remote # keep conflict (remote) version, replace originals")
-		return
-	}
-
-	removed := 0
-	for _, c := range conflicts {
-		conflictPath := filepath.Join(absDir, c)
-
-		if keepRemote {
-			// The conflict file is the remote version — replace original with it
-			original := strings.Replace(c, ".conflict", "", 1)
-			originalPath := filepath.Join(absDir, original)
-			if err := os.Rename(conflictPath, originalPath); err != nil {
-				fmt.Fprintf(os.Stderr, "  ✗ Could not replace %s: %v\n", original, err)
-				continue
-			}
-			fmt.Printf("  ✅ Replaced with remote: %s\n", original)
-			removed++
-		} else if keepLocal || (!keepLocal && !keepRemote) {
-			// Default: keep original, delete conflict file
-			if err := os.Remove(conflictPath); err != nil {
-				fmt.Fprintf(os.Stderr, "  ✗ Could not remove %s: %v\n", c, err)
-				continue
-			}
-			fmt.Printf("  🗑 Removed: %s\n", c)
-			removed++
+		if len(toResolve) == 0 {
+			fmt.Fprintf(os.Stderr, "No conflict found for path: %s\n", resolvePath)
+			os.Exit(1)
 		}
 	}
 
-	fmt.Printf("\n✅ Resolved %d conflict(s)\n", removed)
+	for _, c := range toResolve {
+		if err := engine.ResolveConflict(c, keepLocal); err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", c.Path, err)
+			continue
+		}
+		conflicts.Resolve(c.Path)
+		side := "local"
+		if !keepLocal {
+			side = "remote"
+		}
+		fmt.Printf("  ✅ %s (kept %s)\n", c.Path, side)
+		resolved++
+	}
+
+	if err := sync2.SaveConflicts(activeProfile, conflicts); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not save conflict state: %v\n", err)
+	}
+
+	fmt.Printf("\n✅ Resolved %d conflict(s)\n", resolved)
 }
 
 func cmdURL(cfg *config.Config) {
@@ -997,7 +1109,40 @@ func cmdWatch(cfg *config.Config) {
 
 	settleTime := time.Duration(cfg.SettleTimeMs) * time.Millisecond
 
-	w, err := watcher.New(watcher.Config{
+	// Check for --legacy flag
+	useLegacy := false
+	for _, arg := range os.Args[2:] {
+		if arg == "--legacy" {
+			useLegacy = true
+		}
+	}
+
+	if useLegacy {
+		w, err := watcher.New(watcher.Config{
+			Profile:      activeProfile,
+			SyncDir:      syncDir,
+			ServerURL:    cfg.ServerURL,
+			Client:       client,
+			PollInterval: interval,
+			SettleTime:   settleTime,
+			Verbose:      verbose,
+			Logger:       logger,
+		})
+		if err != nil {
+			logger.Fatalf("Failed to start watcher: %v", err)
+		}
+		if logPath == "" {
+			fmt.Printf("👁 Watching (legacy): %s ↔ %s\n", syncDir, cfg.ServerURL)
+			fmt.Println("   Press Ctrl+C to stop.")
+		}
+		if err := w.Run(); err != nil {
+			logger.Fatalf("Watcher error: %v", err)
+		}
+		return
+	}
+
+	// v2 watcher
+	w2, err := sync2.NewWatcher(sync2.WatcherConfig{
 		Profile:      activeProfile,
 		SyncDir:      syncDir,
 		ServerURL:    cfg.ServerURL,
@@ -1013,11 +1158,11 @@ func cmdWatch(cfg *config.Config) {
 
 	if logPath == "" {
 		fmt.Printf("👁 Watching: %s ↔ %s\n", syncDir, cfg.ServerURL)
-		fmt.Printf("   fsnotify: enabled, poll: every %s\n", interval)
+		fmt.Printf("   engine: sync2, poll: every %s, settle: %s\n", interval, settleTime)
 		fmt.Println("   Press Ctrl+C to stop.")
 	}
 
-	if err := w.Run(); err != nil {
+	if err := w2.Run(); err != nil {
 		logger.Fatalf("Watcher error: %v", err)
 	}
 }
