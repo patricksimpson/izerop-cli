@@ -1,6 +1,7 @@
 package sync2
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -819,16 +820,26 @@ func (e *Engine) uploadFile(relPath string, lf localFile, existingID string, dir
 	localPath := filepath.Join(e.SyncDir, relPath)
 
 	if existingID != "" {
-		// Update existing file
+		// Update existing file — use If-Match for optimistic concurrency
+		// Look up the expected remote hash from the synced tree
+		expectedHash := ""
+		if sf, ok := tree.Files[relPath]; ok {
+			expectedHash = sf.RemoteHash
+		}
+
 		if isTextFile(localPath) {
 			contents, err := os.ReadFile(localPath)
 			if err != nil {
 				return err
 			}
-			updated, err := e.Client.UpdateFile(existingID, map[string]string{
+			updated, err := e.Client.UpdateFileWithETag(existingID, map[string]string{
 				"contents": string(contents),
-			})
+			}, expectedHash)
 			if err != nil {
+				var conflictErr *api.ErrConflict
+				if errors.As(err, &conflictErr) {
+					return fmt.Errorf("conflict: server hash changed to %s (use 'izerop conflicts' to resolve)", conflictErr.CurrentHash)
+				}
 				return err
 			}
 			tree.Files[relPath] = SyncedFile{

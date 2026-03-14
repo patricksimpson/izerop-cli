@@ -432,14 +432,55 @@ func (c *Client) CreateTextFile(name, contents, directoryID, contentType string)
 	return &wrapper.File, nil
 }
 
+// ErrConflict is returned when the server rejects an update due to a stale If-Match.
+type ErrConflict struct {
+	CurrentHash string
+}
+
+func (e *ErrConflict) Error() string {
+	return fmt.Sprintf("conflict: server has hash %s", e.CurrentHash)
+}
+
 // UpdateFile updates a file's contents or metadata.
+// If ifMatch is non-empty, sends an If-Match header for optimistic concurrency.
 func (c *Client) UpdateFile(fileID string, updates map[string]string) (*FileEntry, error) {
+	return c.UpdateFileWithETag(fileID, updates, "")
+}
+
+// UpdateFileWithETag updates a file with optional optimistic concurrency via If-Match.
+// Returns ErrConflict if the server responds with 409 (file was modified by another client).
+func (c *Client) UpdateFileWithETag(fileID string, updates map[string]string, ifMatch string) (*FileEntry, error) {
 	data, _ := json.Marshal(updates)
-	resp, err := c.do("PATCH", fmt.Sprintf("/api/v1/files/%s", fileID), bytes.NewReader(data))
+
+	url := fmt.Sprintf("%s/api/v1/files/%s", c.BaseURL, fileID)
+	req, err := http.NewRequest("PATCH", url, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if c.ClientKey != "" {
+		req.Header.Set("X-Client-Key", c.ClientKey)
+	}
+	if ifMatch != "" {
+		req.Header.Set("If-Match", fmt.Sprintf(`"%s"`, ifMatch))
+	}
+
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusConflict {
+		var conflictResp struct {
+			CurrentHash string `json:"current_hash"`
+		}
+		json.NewDecoder(resp.Body).Decode(&conflictResp)
+		return nil, &ErrConflict{CurrentHash: conflictResp.CurrentHash}
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
