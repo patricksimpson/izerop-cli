@@ -1,24 +1,21 @@
-//go:build !windows
-
 package sync2
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
+	"time"
 
 	"github.com/patricksimpson/izerop-cli/pkg/config"
 )
 
 // SyncLock prevents concurrent sync operations on the same profile.
-// Uses flock for cross-process safety.
+// On Windows, uses exclusive file creation as a lock (no flock available).
 type SyncLock struct {
 	file *os.File
 }
 
 // AcquireSyncLock tries to acquire an exclusive lock for the given profile.
-// Returns an error if another process already holds the lock.
 func AcquireSyncLock(profile string) (*SyncLock, error) {
 	dir, err := config.ProfileDir(profile)
 	if err != nil {
@@ -27,15 +24,16 @@ func AcquireSyncLock(profile string) (*SyncLock, error) {
 	os.MkdirAll(dir, 0700)
 
 	lockPath := filepath.Join(dir, "sync.lock")
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("open lock file: %w", err)
+
+	// If lock file exists and is older than 30 min, treat as stale
+	if info, statErr := os.Stat(lockPath); statErr == nil {
+		if time.Since(info.ModTime()) > 30*time.Minute {
+			os.Remove(lockPath)
+		}
 	}
 
-	// Try non-blocking exclusive lock
-	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0600)
 	if err != nil {
-		f.Close()
 		return nil, fmt.Errorf("another sync is already running for profile %q", profile)
 	}
 
@@ -45,7 +43,8 @@ func AcquireSyncLock(profile string) (*SyncLock, error) {
 // Release releases the sync lock.
 func (l *SyncLock) Release() {
 	if l.file != nil {
-		syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+		path := l.file.Name()
 		l.file.Close()
+		os.Remove(path)
 	}
 }
