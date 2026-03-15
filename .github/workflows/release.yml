@@ -156,3 +156,10 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+      - name: Notify Discord
+        if: success()
+        run: |
+          curl -s -H "Content-Type: application/json" \
+            -d "{\"content\": \"📦 **izerop CLI ${{ github.ref_name }} released**\nUpdate with: \`izerop update\`\n<https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}>\"}" \
+            "${{ secrets.DISCORD_WEBHOOK_URL }}"
