@@ -585,6 +585,23 @@ func cmdPush(cfg *config.Config) {
 	}
 
 	fmt.Printf("✅ Uploaded: %s (%s)\n", file.Name, file.ID[:8])
+
+	// Update sync state so future syncs can detect conflicts
+	absPath, _ := filepath.Abs(filePath)
+	syncDir := cfg.SyncDir
+	if relPath, relErr := filepath.Rel(syncDir, absPath); relErr == nil && !strings.HasPrefix(relPath, "..") {
+		localHash, hashErr := sync2.HashFile(absPath)
+		if hashErr == nil {
+			tree, _ := sync2.LoadState(activeProfile)
+			tree.Files[relPath] = sync2.SyncedFile{
+				RemoteID:   file.ID,
+				LocalHash:  localHash,
+				RemoteHash: file.ContentHash,
+				Size:       info.Size(),
+			}
+			sync2.SaveState(activeProfile, tree)
+		}
+	}
 }
 
 func cmdConflicts(cfg *config.Config) {
