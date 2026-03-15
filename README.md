@@ -334,33 +334,63 @@ izerop ls
 
 ## Sync Behavior
 
-### How It Works
+### How It Works (v2 Engine)
 
-- **Push:** Walks your local directory, compares against remote files by path and size, uploads new or changed files
-- **Pull:** Uses a cursor-based changes API to fetch only what's new since the last sync
-- **Watch:** Combines fsnotify (instant local detection) with periodic server polling (remote changes)
+The sync engine uses a **three-tree model** inspired by Dropbox's Nucleus:
 
-### Conflict Detection
+- **Local tree** — what's on disk (computed via scan or fsnotify)
+- **Remote tree** — what the server has (fetched via manifest/changes API)
+- **Synced tree** — the last agreed-upon state between local and remote
 
-When both local and remote versions of a file change between syncs:
+Each sync cycle compares all three trees:
 
-- The **winning** version overwrites the file
-- The **losing** version is saved as `filename.conflict.ext`
-- Conflict files are skipped during push (won't re-upload)
+| Local vs Synced | Remote vs Synced | Action |
+|-----------------|------------------|--------|
+| Same | Same | Skip |
+| Changed | Same | Push |
+| Same | Changed | Pull |
+| Changed | Changed (same content) | Skip (converged) |
+| Changed | Changed (different) | Conflict |
 
-Review `.conflict` files manually and delete them when resolved.
+This eliminates false conflicts that plague two-way sync.
+
+### File Stability
+
+Files are only synced when **at rest**. The stability tracker monitors fsnotify events and waits for a cooldown period (default 5s) with no changes before a file is eligible for sync. This prevents syncing half-written files.
+
+### Conflict Resolution
+
+When both local and remote versions of a file change between syncs, the conflict is queued (not written to disk as `.conflict` files):
+
+```bash
+# View conflicts
+izerop conflicts
+
+# Resolve a specific file — keep your version
+izerop conflicts --resolve path/to/file.txt --keep local
+
+# Resolve a specific file — keep server version
+izerop conflicts --resolve path/to/file.txt --keep remote
+
+# Resolve all — keep local versions
+izerop conflicts --resolve-all --keep local
+```
+
+### Optimistic Concurrency
+
+File updates use `If-Match` / ETag headers. If another client updates a file between your last sync and push, the server returns `409 Conflict` instead of silently overwriting.
 
 ### State File
 
-Sync state is stored at `~/.config/izerop/profiles/<name>/sync-state.json`. This tracks:
+Sync state is stored at `~/.config/izerop/profiles/<name>/sync-state-v2.json`. This tracks:
 
 - Server cursor (for incremental pull)
-- File records (size, mod time, remote timestamp for conflict detection)
-- Note mappings (text files synced via contents API)
+- Per-file local and remote content hashes at last sync
+- Remote file IDs
 
 Don't delete this file unless you want a full re-sync.
 
-> **Note:** Older versions stored state as `.izerop-sync.json` inside the sync directory. The CLI automatically migrates this to the config directory on first run.
+> **Note:** The v2 engine auto-migrates v1 state on first run. Use `--legacy` to fall back to the v1 engine if needed.
 
 ### What Gets Synced
 
@@ -390,14 +420,33 @@ izerop --server http://localhost:3000 ls
 ```
 cmd/izerop/        CLI entrypoint
 pkg/api/           API client (reusable library)
-pkg/sync/          Sync engine (reusable library)
+pkg/sync/          Sync engine v1 (legacy)
+pkg/sync2/         Sync engine v2 (three-tree model, active)
 pkg/config/        Configuration management
-pkg/watcher/       fsnotify + polling watcher
+pkg/watcher/       fsnotify + polling watcher (v1)
 pkg/updater/       Self-update from GitHub releases
 internal/auth/     Authentication flow
 ```
 
 The `pkg/` packages are designed as reusable libraries — a GUI wrapper (e.g., [Wails](https://wails.io)) can import `pkg/api`, `pkg/sync`, and `pkg/watcher` directly without depending on CLI code.
+
+## Testing
+
+```bash
+# Run all tests
+make test
+
+# Run with verbose output
+go test ./... -v -count=1
+
+# Run only sync engine tests
+go test ./pkg/sync2/ -v
+
+# Run a specific test
+go test ./pkg/sync2/ -run TestSync_BothChanged_DifferentContent_Conflict -v
+```
+
+Tests use `httptest` mock servers — no external dependencies needed.
 
 ## Building
 
