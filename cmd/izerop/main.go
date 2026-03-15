@@ -559,12 +559,17 @@ func cmdPush(cfg *config.Config) {
 		}
 	}
 
-	// Verify file exists
-	info, err := os.Stat(filePath)
+	// Verify file exists and is not a symlink
+	lstat, err := os.Lstat(filePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "File not found: %s\n", filePath)
 		os.Exit(1)
 	}
+	if lstat.Mode()&os.ModeSymlink != 0 {
+		fmt.Fprintf(os.Stderr, "Refusing to push symlink: %s (could exfiltrate files outside sync dir)\n", filePath)
+		os.Exit(1)
+	}
+	info := lstat
 	if info.IsDir() {
 		fmt.Fprintf(os.Stderr, "Cannot push a directory (yet). Use a file path.\n")
 		os.Exit(1)
@@ -580,6 +585,23 @@ func cmdPush(cfg *config.Config) {
 	}
 
 	fmt.Printf("✅ Uploaded: %s (%s)\n", file.Name, file.ID[:8])
+
+	// Update sync state so future syncs can detect conflicts
+	absPath, _ := filepath.Abs(filePath)
+	syncDir := cfg.SyncDir
+	if relPath, relErr := filepath.Rel(syncDir, absPath); relErr == nil && !strings.HasPrefix(relPath, "..") {
+		localHash, hashErr := sync2.HashFile(absPath)
+		if hashErr == nil {
+			tree, _ := sync2.LoadState(activeProfile)
+			tree.Files[relPath] = sync2.SyncedFile{
+				RemoteID:   file.ID,
+				LocalHash:  localHash,
+				RemoteHash: file.ContentHash,
+				Size:       info.Size(),
+			}
+			sync2.SaveState(activeProfile, tree)
+		}
+	}
 }
 
 func cmdConflicts(cfg *config.Config) {

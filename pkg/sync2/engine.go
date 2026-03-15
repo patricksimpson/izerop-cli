@@ -151,7 +151,11 @@ func (e *Engine) Sync() (*SyncResult, error) {
 			}
 
 		case ActionDeleteLocal:
-			localPath := filepath.Join(e.SyncDir, action.Path)
+			localPath, pathErr := e.safePath(action.Path)
+			if pathErr != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("delete local %s: %v", action.Path, pathErr))
+				continue
+			}
 			if err := os.Remove(localPath); err != nil && !os.IsNotExist(err) {
 				result.Errors = append(result.Errors, fmt.Sprintf("delete local %s: %v", action.Path, err))
 			} else {
@@ -228,6 +232,11 @@ func (e *Engine) SyncPull() (*SyncResult, error) {
 
 		relPath := e.remoteToLocal(change.Path)
 		if relPath == "" {
+			continue
+		}
+		// Block path traversal from server-supplied paths
+		if _, pathErr := e.safePath(relPath); pathErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("skip %s: %v", relPath, pathErr))
 			continue
 		}
 		if e.isIgnored(relPath, false) {
@@ -536,6 +545,7 @@ type localFile struct {
 }
 
 // buildLocalTree walks the sync directory and hashes every file.
+// Symlinks are skipped to prevent exfiltrating files outside the sync directory.
 func (e *Engine) buildLocalTree() (map[string]localFile, error) {
 	files := make(map[string]localFile)
 
@@ -556,6 +566,19 @@ func (e *Engine) buildLocalTree() (map[string]localFile, error) {
 
 		relPath, _ := filepath.Rel(e.SyncDir, path)
 		if relPath == "." {
+			return nil
+		}
+
+		// Skip symlinks — they could point outside the sync dir and exfiltrate data
+		lstat, lstatErr := os.Lstat(path)
+		if lstatErr != nil {
+			return nil
+		}
+		if lstat.Mode()&os.ModeSymlink != 0 {
+			e.log("  ⚠ Skipping symlink: %s", relPath)
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -759,6 +782,27 @@ func (e *Engine) executePush(action Action, local map[string]localFile, remote m
 	return e.uploadFile(action.Path, lf, "", "", remoteDirsByPath, tree)
 }
 
+// safePath validates that a relative path doesn't escape the sync directory.
+// Returns the cleaned absolute path or an error if it would escape.
+func (e *Engine) safePath(relPath string) (string, error) {
+	// Clean the path to resolve any .. components
+	cleaned := filepath.Clean(relPath)
+
+	// Reject paths that start with .. or are absolute
+	if strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("path traversal blocked: %q resolves outside sync directory", relPath)
+	}
+
+	absPath := filepath.Join(e.SyncDir, cleaned)
+
+	// Double-check: resolved path must be inside sync dir
+	if !strings.HasPrefix(absPath, e.SyncDir+string(filepath.Separator)) && absPath != e.SyncDir {
+		return "", fmt.Errorf("path traversal blocked: %q resolves to %q (outside %q)", relPath, absPath, e.SyncDir)
+	}
+
+	return absPath, nil
+}
+
 // executePull downloads a remote file and updates the synced tree.
 func (e *Engine) executePull(action Action, remote map[string]remoteFile, tree *SyncedTree) error {
 	rf, ok := remote[action.Path]
@@ -766,7 +810,10 @@ func (e *Engine) executePull(action Action, remote map[string]remoteFile, tree *
 		return fmt.Errorf("file not in remote tree")
 	}
 
-	localPath := filepath.Join(e.SyncDir, action.Path)
+	localPath, err := e.safePath(action.Path)
+	if err != nil {
+		return err
+	}
 	os.MkdirAll(filepath.Dir(localPath), 0755)
 
 	if err := e.downloadFile(rf.ID, localPath); err != nil {
@@ -993,7 +1040,10 @@ func (e *Engine) handleDirChange(change api.Change) {
 	if relPath == "" {
 		return
 	}
-	localPath := filepath.Join(e.SyncDir, relPath)
+	localPath, err := e.safePath(relPath)
+	if err != nil {
+		return // silently skip path-traversal directory changes
+	}
 
 	switch change.Action {
 	case "created", "modified":
