@@ -941,6 +941,12 @@ func (e *Engine) uploadFile(relPath string, lf localFile, existingID string, dir
 
 	name := filepath.Base(relPath)
 
+	// If this file was tracked as a note (no extension on server),
+	// strip the .txt we added locally so it doesn't create a duplicate
+	if sf, ok := tree.Files[relPath]; ok && sf.IsNote {
+		name = strings.TrimSuffix(name, ".txt")
+	}
+
 	if isTextFile(localPath) {
 		contents, err := os.ReadFile(localPath)
 		if err != nil {
