@@ -327,7 +327,15 @@ func (c *Client) UploadFile(localPath, directoryID, name string) (*FileEntry, er
 		req.Header.Set("X-Client-Key", c.ClientKey)
 	}
 
-	resp, err := c.HTTPClient.Do(req)
+	// Scale timeout based on payload size: 30s base + 30s per 10MB
+	payloadSize := int64(body.Len())
+	uploadTimeout := 30*time.Second + time.Duration(payloadSize/(10*1024*1024))*30*time.Second
+	if uploadTimeout < 60*time.Second {
+		uploadTimeout = 60 * time.Second
+	}
+	uploadClient := &http.Client{Timeout: uploadTimeout}
+
+	resp, err := uploadClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("upload request failed: %w", err)
 	}
