@@ -121,6 +121,15 @@ func (w *Watcher) Run() error {
 
 		case <-sigCh:
 			w.cfg.Logger.Println("Shutting down...")
+			// Flush any pending stable files before exit
+			if pending := w.stability.AllPending(); len(pending) > 0 {
+				w.cfg.Logger.Printf("Flushing %d pending file(s)...", len(pending))
+				// Mark all pending as stable so push picks them up
+				for _, p := range pending {
+					w.stability.MarkStable(p)
+				}
+				w.runPush()
+			}
 			w.fsw.Close()
 			w.cfg.Logger.Println("Goodbye!")
 			return nil

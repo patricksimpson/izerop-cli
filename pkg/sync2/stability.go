@@ -90,3 +90,23 @@ func (s *StabilityTracker) PendingCount() int {
 	}
 	return count
 }
+
+// AllPending returns all tracked paths (both stable and still in cooldown).
+func (s *StabilityTracker) AllPending() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	paths := make([]string, 0, len(s.pending))
+	for p := range s.pending {
+		paths = append(paths, p)
+	}
+	return paths
+}
+
+// MarkStable forces a path's cooldown to expire so it's picked up on next push.
+func (s *StabilityTracker) MarkStable(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.pending[path]; exists {
+		s.pending[path] = time.Now().Add(-s.cooldown - time.Second)
+	}
+}
