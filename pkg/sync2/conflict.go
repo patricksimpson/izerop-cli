@@ -74,8 +74,15 @@ func SaveConflicts(profile string, q *ConflictQueue) error {
 	if err != nil {
 		return err
 	}
-	os.MkdirAll(filepath.Dir(path), 0700)
-	return os.WriteFile(path, data, 0600)
+	dir := filepath.Dir(path)
+	os.MkdirAll(dir, 0700)
+
+	// Atomic write: temp file + rename
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // Add queues a new conflict.

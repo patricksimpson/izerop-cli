@@ -336,6 +336,14 @@ func cmdSync(cfg *config.Config) {
 	// v2 sync engine
 	fmt.Printf("Syncing: %s ↔ %s\n", syncDir, cfg.ServerURL)
 
+	// Acquire sync lock to prevent concurrent operations
+	lock, lockErr := sync2.AcquireSyncLock(activeProfile)
+	if lockErr != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", lockErr)
+		os.Exit(1)
+	}
+	defer lock.Release()
+
 	// Auto-migrate v1 state if needed
 	if _, migrated, err := sync2.MigrateIfNeeded(activeProfile); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: state migration failed: %v\n", err)

@@ -110,3 +110,19 @@ func (s *StabilityTracker) MarkStable(path string) {
 		s.pending[path] = time.Now().Add(-s.cooldown - time.Second)
 	}
 }
+
+// Prune removes entries older than maxAge to prevent unbounded memory growth.
+// Call periodically (e.g., every few minutes) during long-running watch.
+func (s *StabilityTracker) Prune(maxAge time.Duration) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	pruned := 0
+	for path, lastEvent := range s.pending {
+		if now.Sub(lastEvent) > maxAge {
+			delete(s.pending, path)
+			pruned++
+		}
+	}
+	return pruned
+}

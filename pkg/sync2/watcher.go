@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	gosync "sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,7 +36,7 @@ type Watcher struct {
 	syncMu    gosync.Mutex // prevents overlapping sync cycles
 	pushCh    chan struct{} // signal to trigger a push
 	stopCh    chan struct{}
-	pulling   bool // true during pull — suppresses fsnotify processing
+	pulling   atomic.Bool // true during pull — suppresses fsnotify processing
 }
 
 // NewWatcher creates a new v2 Watcher.
@@ -93,6 +94,10 @@ func (w *Watcher) Run() error {
 	stabilityTicker := time.NewTicker(2 * time.Second)
 	defer stabilityTicker.Stop()
 
+	// Prune stale stability entries every 5 minutes to prevent memory leak
+	pruneTicker := time.NewTicker(5 * time.Minute)
+	defer pruneTicker.Stop()
+
 	for {
 		select {
 		case event, ok := <-w.fsw.Events:
@@ -115,6 +120,11 @@ func (w *Watcher) Run() error {
 
 		case <-w.pushCh:
 			w.runPush()
+
+		case <-pruneTicker.C:
+			if pruned := w.stability.Prune(10 * time.Minute); pruned > 0 && w.cfg.Verbose {
+				w.cfg.Logger.Printf("Pruned %d stale stability entries", pruned)
+			}
 
 		case <-pollTicker.C:
 			w.runPull()
@@ -148,7 +158,7 @@ func (w *Watcher) Stop() {
 
 // handleFSEvent processes a single fsnotify event.
 func (w *Watcher) handleFSEvent(event fsnotify.Event) {
-	if w.pulling {
+	if w.pulling.Load() {
 		return // ignore events caused by our own downloads
 	}
 
@@ -193,8 +203,8 @@ func (w *Watcher) runFullSync(reason string) {
 
 	w.cfg.Logger.Printf("Full sync (%s)...", reason)
 
-	w.pulling = true
-	defer func() { w.pulling = false }()
+	w.pulling.Store(true)
+	defer w.pulling.Store(false)
 
 	engine := w.newEngine()
 	result, err := engine.Sync()
@@ -211,8 +221,8 @@ func (w *Watcher) runPull() {
 	w.syncMu.Lock()
 	defer w.syncMu.Unlock()
 
-	w.pulling = true
-	defer func() { w.pulling = false }()
+	w.pulling.Store(true)
+	defer w.pulling.Store(false)
 
 	engine := w.newEngine()
 	result, err := engine.SyncPull()

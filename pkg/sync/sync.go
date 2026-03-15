@@ -885,6 +885,13 @@ func (e *Engine) handleFileChange(change api.Change, result *SyncResult) {
 		localRel = localRel + ".txt"
 	}
 
+	// Block path traversal from server-supplied paths
+	cleaned := filepath.Clean(localRel)
+	if strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
+		result.Errors = append(result.Errors, fmt.Sprintf("path traversal blocked: %q", localRel))
+		return
+	}
+
 	// Check ignore rules
 	if e.Ignore.IsIgnored(localRel, false) {
 		result.Skipped++
