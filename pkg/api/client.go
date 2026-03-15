@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+// truncateBody limits error response bodies to prevent token leakage in logs.
+func truncateBody(body []byte, maxLen int) string {
+	s := string(body)
+	if len(s) > maxLen {
+		return s[:maxLen] + "...(truncated)"
+	}
+	return s
+}
+
 // Client communicates with the izerop API.
 type Client struct {
 	BaseURL    string
@@ -343,7 +352,7 @@ func (c *Client) UploadFile(localPath, directoryID, name string) (*FileEntry, er
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("upload failed (status %d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("upload failed (status %d): %s", resp.StatusCode, truncateBody(respBody, 500))
 	}
 
 	var wrapper struct {
@@ -562,7 +571,7 @@ func (c *Client) CreateDirectory(name, parentID string) (*Directory, error) {
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("create directory failed (status %d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("create directory failed (status %d): %s", resp.StatusCode, truncateBody(respBody, 500))
 	}
 
 	var wrapper struct {

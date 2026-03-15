@@ -600,7 +600,15 @@ func (e *Engine) buildLocalTree() (map[string]localFile, error) {
 
 		hash, err := HashFile(path)
 		if err != nil {
-			return nil // skip files we can't read
+			// Can't read file — use empty hash as sentinel so it's not
+			// treated as "deleted" and removed from the server
+			e.log("  ⚠ Cannot read %s: %v (skipping sync for this file)", relPath, err)
+			files[relPath] = localFile{
+				hash: "", // empty hash — won't match any remote hash, won't delete
+				size: info.Size(),
+				path: path,
+			}
+			return nil
 		}
 
 		files[relPath] = localFile{
