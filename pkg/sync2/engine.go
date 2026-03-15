@@ -536,6 +536,7 @@ type localFile struct {
 }
 
 // buildLocalTree walks the sync directory and hashes every file.
+// Symlinks are skipped to prevent exfiltrating files outside the sync directory.
 func (e *Engine) buildLocalTree() (map[string]localFile, error) {
 	files := make(map[string]localFile)
 
@@ -556,6 +557,19 @@ func (e *Engine) buildLocalTree() (map[string]localFile, error) {
 
 		relPath, _ := filepath.Rel(e.SyncDir, path)
 		if relPath == "." {
+			return nil
+		}
+
+		// Skip symlinks — they could point outside the sync dir and exfiltrate data
+		lstat, lstatErr := os.Lstat(path)
+		if lstatErr != nil {
+			return nil
+		}
+		if lstat.Mode()&os.ModeSymlink != 0 {
+			e.log("  ⚠ Skipping symlink: %s", relPath)
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
