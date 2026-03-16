@@ -97,6 +97,8 @@ func main() {
 		cmdPush(cfg)
 	case "url":
 		cmdURL(cfg)
+	case "visibility":
+		cmdVisibility(cfg)
 	case "conflicts":
 		cmdConflicts(cfg)
 	case "pull":
@@ -543,14 +545,15 @@ func cmdReconcile(cfg *config.Config) {
 }
 
 func cmdPush(cfg *config.Config) {
-	// Usage: izerop push <file> [--dir <directory_id>] [--name <name>]
+	// Usage: izerop push <file> [--dir <directory_id>] [--name <name>] [--public]
 	if len(os.Args) < 3 {
-		fmt.Fprintf(os.Stderr, "Usage: izerop push <file> [--dir <directory_id>] [--name <name>]\n")
+		fmt.Fprintf(os.Stderr, "Usage: izerop push <file> [--dir <directory_id>] [--name <name>] [--public]\n")
 		os.Exit(1)
 	}
 
 	filePath := os.Args[2]
 	var dirID, name string
+	public := false
 
 	for i := 3; i < len(os.Args); i++ {
 		switch os.Args[i] {
@@ -564,6 +567,8 @@ func cmdPush(cfg *config.Config) {
 				name = os.Args[i+1]
 				i++
 			}
+		case "--public":
+			public = true
 		}
 	}
 
@@ -586,13 +591,21 @@ func cmdPush(cfg *config.Config) {
 	client := newClient(cfg)
 
 	fmt.Printf("Uploading %s (%s)...\n", filePath, formatSize(info.Size()))
-	file, err := client.UploadFile(filePath, dirID, name)
+	var extraFields map[string]string
+	if public {
+		extraFields = map[string]string{"public": "true"}
+	}
+	file, err := client.UploadFileWithOptions(filePath, dirID, name, extraFields)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Upload failed: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Uploaded: %s (%s)\n", file.Name, file.ID[:8])
+	publicLabel := ""
+	if file.Public {
+		publicLabel = " 🌐 public"
+	}
+	fmt.Printf("✅ Uploaded: %s (%s)%s\n", file.Name, file.ID[:8], publicLabel)
 
 	// Update sync state so future syncs can detect conflicts
 	absPath, _ := filepath.Abs(filePath)
@@ -610,6 +623,84 @@ func cmdPush(cfg *config.Config) {
 			sync2.SaveState(activeProfile, tree)
 		}
 	}
+}
+
+func cmdVisibility(cfg *config.Config) {
+	// Usage: izerop visibility <file_id_or_name> --public | --private
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: izerop visibility <file_id_or_name> --public | --private\n")
+		os.Exit(1)
+	}
+
+	target := os.Args[2]
+	setPublic := false
+	setPrivate := false
+
+	for i := 3; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--public":
+			setPublic = true
+		case "--private":
+			setPrivate = true
+		}
+	}
+
+	if !setPublic && !setPrivate {
+		fmt.Fprintf(os.Stderr, "Specify --public or --private\n")
+		os.Exit(1)
+	}
+	if setPublic && setPrivate {
+		fmt.Fprintf(os.Stderr, "Specify --public or --private, not both\n")
+		os.Exit(1)
+	}
+
+	client := newClient(cfg)
+
+	// Try target as file ID first
+	fileID := target
+	file, err := client.GetFile(fileID)
+	if err != nil {
+		// Not a valid ID — try to resolve by filename
+		fileID = resolveFileIDByName(client, target)
+		if fileID == "" {
+			fmt.Fprintf(os.Stderr, "File not found: %s\n", target)
+			os.Exit(1)
+		}
+	} else {
+		_ = file
+	}
+
+	updated, err := client.SetFileVisibility(fileID, setPublic)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to update visibility: %v\n", err)
+		os.Exit(1)
+	}
+
+	if updated.Public {
+		fmt.Printf("🌐 %s is now public\n", updated.Name)
+	} else {
+		fmt.Printf("🔒 %s is now private\n", updated.Name)
+	}
+}
+
+// resolveFileIDByName searches remote files for a matching filename and returns its ID.
+func resolveFileIDByName(client *api.Client, name string) string {
+	dirs, err := client.ListDirectories()
+	if err != nil {
+		return ""
+	}
+	for _, dir := range dirs {
+		files, err := client.ListFiles(dir.ID)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.Name == name {
+				return f.ID
+			}
+		}
+	}
+	return ""
 }
 
 func cmdConflicts(cfg *config.Config) {
@@ -1943,10 +2034,25 @@ func printCommandHelp(cmd string) {
   Options:
     --dir <id>     Target directory ID
     --name <name>  Override the filename on the server
+    --public       Make the file publicly accessible
 
   Examples:
     izerop push photo.jpg --dir abc123
+    izerop push report.html --public
     izerop push IMG_001.jpg --dir abc123 --name vacation.jpg`,
+
+		"visibility": `izerop visibility <file_id_or_name> --public | --private
+
+  Set a file's visibility to public or private.
+  Accepts a file ID or filename (searches all directories).
+
+  Options:
+    --public    Make the file publicly accessible
+    --private   Make the file private (default)
+
+  Examples:
+    izerop visibility report.html --public
+    izerop visibility abc12345 --private`,
 
 		"conflicts": `izerop conflicts [options]
 
@@ -2068,8 +2174,9 @@ Commands:
   reconcile Full reconcile using server manifest (recovery/verification)
   watch     Watch and sync (fsnotify + polling, --daemon for background)
   logs      View watch daemon logs (--follow, --tail N)
-  push      Upload files to server
+  push      Upload files to server (--public to make public)
   url       Get the direct asset URL for a file
+  visibility  Set a file's public/private visibility
   conflicts List and resolve conflict files
   pull      Download files from server
   ls        List remote files and directories

@@ -295,6 +295,11 @@ func (c *Client) GetChanges(cursor string) (*ChangesResponse, error) {
 
 // UploadFile uploads a local file to the server.
 func (c *Client) UploadFile(localPath, directoryID, name string) (*FileEntry, error) {
+	return c.UploadFileWithOptions(localPath, directoryID, name, nil)
+}
+
+// UploadFileWithOptions uploads a local file with optional extra form fields (e.g., "public" => "true").
+func (c *Client) UploadFileWithOptions(localPath, directoryID, name string, extraFields map[string]string) (*FileEntry, error) {
 	f, err := os.Open(localPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not open file: %w", err)
@@ -321,6 +326,9 @@ func (c *Client) UploadFile(localPath, directoryID, name string) (*FileEntry, er
 		writer.WriteField("directory_id", directoryID)
 	}
 	writer.WriteField("name", name)
+	for k, v := range extraFields {
+		writer.WriteField(k, v)
+	}
 	writer.Close()
 
 	url := fmt.Sprintf("%s/api/v1/files", c.BaseURL)
@@ -511,6 +519,15 @@ func (c *Client) UpdateFileWithETag(fileID string, updates map[string]string, if
 		return nil, fmt.Errorf("could not decode response: %w", err)
 	}
 	return &wrapper.File, nil
+}
+
+// SetFileVisibility sets a file's public/private status.
+func (c *Client) SetFileVisibility(fileID string, public bool) (*FileEntry, error) {
+	val := "false"
+	if public {
+		val = "true"
+	}
+	return c.UpdateFile(fileID, map[string]string{"public": val})
 }
 
 // DeleteFile soft-deletes a file by ID.
