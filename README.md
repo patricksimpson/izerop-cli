@@ -169,6 +169,21 @@ izerop push photo.jpg --dir <directory-id>
 
 # Upload with a custom name
 izerop push IMG_001.jpg --dir <directory-id> --name vacation.jpg
+
+# Upload as public
+izerop push report.html --public
+```
+
+### `visibility`
+
+Set a file's public/private visibility.
+
+```bash
+# Make a file public (accepts filename or file ID)
+izerop visibility report.html --public
+
+# Make a file private
+izerop visibility abc12345 --private
 ```
 
 ### `pull`
@@ -522,6 +537,7 @@ make desktop-dev
 - [x] File upload/download (`push`, `pull`)
 - [x] Directory listing and creation (`ls`, `mkdir`)
 - [x] Delete and move/rename (`rm`, `mv`)
+- [x] File visibility control (`visibility`, `push --public`)
 - [x] Bidirectional sync with cursor-based changes
 - [x] Conflict detection
 - [x] File watching with fsnotify
